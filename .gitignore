@@ -1,0 +1,6 @@
+build
+dist
+data
+*.egg-info
+compile_commands.json
+.cache

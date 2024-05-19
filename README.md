@@ -41,3 +41,23 @@ python test/example_simple.py
 # MobileNet_V2 and CIFAR10
 python test/example.py
 ```
+
+## 使用
+
+导入 kaitian 前需要导入 torch 包，即
+
+```
+import torch
+# import torch_mlu  # 如果使用 Cambricon MLU, 请取消注释
+import torch_kaitian
+```
+
+以 cuda 和 nccl 为例
+
+| 原始代码                                                     | 修改后代码                                                   |
+| ------------------------------------------------------------ | ------------------------------------------------------------ |
+| world_size = torch.cuda.device_count()                       | world_size = torch_kaitian.init()                            |
+| backend = "nccl"<br />dist.init_process_group(backend, rank=rank, world_size=size) | backend = "kaitian"<br />dist.init_process_group(backend, rank=rank, world_size=size) |
+| torch.cuda.set_device(rank)                                  | torch_kaitian.set_device(rank)                               |
+| device = "cuda"<br />model = model.to(device)                | device = torch_kaitian.device()<br />model = model.to(device) |
+

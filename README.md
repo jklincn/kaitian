@@ -16,7 +16,7 @@ KaiTian（开天）是 Pytorch 的通信后端扩展，它统一了各种集体�
 - [Cambricon Neuware SDK](https://sdk.cambricon.com/download?component_name=Neuware+SDK)
 - [Cambricon Pytorch](https://sdk.cambricon.com/download?component_name=PyTorch)
 
-Cambricon Pytorch 源码安装（包括 Cambricon Neuware SDK 安装）可以参考 [jklincn/cambricon-pytorch](https://github.com/jklincn/cambricon-pytorch) 。
+Cambricon Pytorch 的源码安装过程（包括 Cambricon Neuware SDK 安装）可以参考 [jklincn/cambricon-pytorch](https://github.com/jklincn/cambricon-pytorch) 。
 
 #### 可配置环境变量
 
@@ -24,9 +24,9 @@ Cambricon Pytorch 源码安装（包括 Cambricon Neuware SDK 安装）可以参
 
 ## 安装
 
-当前仅测试的 pytorch 版本：
+当前通过测试的 pytorch 版本：
 
-- 1.13.1
+- [1.13.1](https://github.com/pytorch/pytorch/tree/v1.13.1)
 
 ```
 python setup.py install
@@ -35,7 +35,9 @@ python setup.py install
 ## 测试
 
 ```
-python example_simple.py
-# Use MobileNet_V2 and CIFAR10
-python example.py
+# Only one linear layer and random data
+python test/example_simple.py
+
+# MobileNet_V2 and CIFAR10
+python test/example.py
 ```

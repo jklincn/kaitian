@@ -19,11 +19,15 @@ define_macros = []
 def cambricon_mlu_support():
     package_name = "torch_mlu"
     try:
+        neuware_path = os.getenv("NEUWARE_HOME", "/usr/local/neuware")
+        if not os.path.exists(neuware_path):
+            raise FileNotFoundError(
+                f"Cambricon Neuware SDK is not installed. Search path: {neuware_path}"
+            )
         try:
             pkg = __import__(package_name)
         except ImportError:
             raise ImportError(f"{package_name} is not installed.")
-
         if not torch.mlu.is_available():
             raise RuntimeError("MLU is not available.")
         torch_mlu_path = pkg.__path__[0]
@@ -32,11 +36,6 @@ def cambricon_mlu_support():
             f"{kaitian_path}/include/support/process_group_cncl.hpp",
             f"{torch_mlu_path}/csrc/framework/distributed/process_group_cncl.hpp",
         )
-        neuware_path = os.getenv("NEUWARE_HOME", "/usr/local/neuware")
-        if not os.path.exists(neuware_path):
-            raise FileNotFoundError(
-                f"Cambricon Neuware SDK is not installed. Search path: {neuware_path}"
-            )
         sources.extend(
             [
                 f"{kaitian_path}/src/support/cambricon_mlu.cpp",

@@ -30,6 +30,8 @@ def cambricon_mlu_support():
             raise ImportError(f"{package_name} is not installed.")
         if not torch.mlu.is_available():
             raise RuntimeError("MLU is not available.")
+        if torch.mlu.device_count() == 0:
+            raise RuntimeError("No MLU device")
         torch_mlu_path = pkg.__path__[0]
         # because torch_mlu only copy *.h
         shutil.copy(

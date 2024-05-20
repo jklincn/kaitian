@@ -1,7 +1,6 @@
 #pragma once
 #include <c10/core/Device.h>
 
-#include <map>
 #include <vector>
 
 #include "device.hpp"

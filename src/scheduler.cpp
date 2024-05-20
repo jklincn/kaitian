@@ -14,7 +14,6 @@ void find_device() {
 #ifdef SUPPORT_CAMBRICON_MLU
     find_mlu();
 #endif
-
     std::vector<kaitian::Device> devices = scheduler.device_available();
     std::cout << "==========================" << std::endl;
     for (auto i = devices.begin(); i != devices.end(); ++i) {
@@ -27,7 +26,8 @@ void find_device() {
             std::cout << "--------------------------" << std::endl;
     }
     std::cout << "==========================" << std::endl;
-    std::cout << "[kaitian] info: Finish finding devices" << std::endl;
+    std::cout << "[kaitian] info: Finish finding devices, devices count: "
+              << devices.size() << std::endl;
 }
 
 unsigned int init_kaitian() {

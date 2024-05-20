@@ -1,5 +1,6 @@
 #pragma once
 
+#include <c10/core/Device.h>
 #include <c10/util/intrusive_ptr.h>
 #include <torch/python.h>
 
@@ -98,7 +99,7 @@ class ProcessGroupKaiTian : public ProcessGroup {
         return std::string(BACKEND_NAME);
     }
 
-   protected:
+   private:
     c10::intrusive_ptr<Store> store_;
 #ifdef SUPPORT_CAMBRICON_MLU
     c10::intrusive_ptr<ProcessGroup> cncl_process_group_;
@@ -109,19 +110,18 @@ class WorkKaiTian : public Work {
     friend class ProcessGroupKaiTian;
 
    public:
-    WorkKaiTian(
-        OpType opType,
-        c10::intrusive_ptr<c10::ivalue::Future> future)  // future of the output
-        : Work(-1,  // rank, only used by recvAnySource, irrelevant in this demo
-               opType),
-          future_(std::move(future)) {}
+    WorkKaiTian(at::Device device);
     bool isCompleted() override;
     bool isSuccess() const override;
     bool wait(std::chrono::milliseconds timeout = kUnsetTimeout) override;
     virtual c10::intrusive_ptr<c10::ivalue::Future> getFuture() override;
 
    private:
-    c10::intrusive_ptr<c10::ivalue::Future> future_;
+    c10::intrusive_ptr<at::ivalue::Future> future_;
+    at::Device device_;
+#ifdef SUPPORT_CAMBRICON_MLU
+    c10::intrusive_ptr<Work> cncl_work_;
+#endif
 };
 
 }  // namespace c10d

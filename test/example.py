@@ -12,9 +12,9 @@ import torchvision.transforms as transforms
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision import models
 
-num_epochs = 1
+num_epochs = 5
 lr = 0.001
-batch_size = 32
+batch_size = 64
 device = torch_kaitian.device()
 
 
@@ -46,6 +46,16 @@ def run(rank, world_size):
         train_set, batch_size=batch_size, sampler=train_sampler, num_workers=2
     )
 
+    test_set = torchvision.datasets.CIFAR10(
+        root="./data", train=False, download=True, transform=transform
+    )
+    test_sampler = torch.utils.data.distributed.DistributedSampler(
+        test_set, num_replicas=world_size, rank=rank, shuffle=False
+    )
+    test_loader = torch.utils.data.DataLoader(
+        test_set, batch_size=batch_size, sampler=test_sampler, num_workers=2
+    )
+
     model = models.mobilenet_v2(weights="MobileNet_V2_Weights.DEFAULT")
     model.classifier[1] = nn.Linear(model.last_channel, 10)
     model = model.to(device)
@@ -68,6 +78,21 @@ def run(rank, world_size):
                     print(
                         f"Rank {rank}, Epoch {epoch+1}/{num_epochs}, Iteration {i}, Loss: {loss.item():.4f}"
                     )
+
+    model.eval()
+    total = 0
+    correct = 0
+    with torch.no_grad():
+        for images, labels in test_loader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = model(images)
+            _, predicted = torch.max(outputs, 1)
+            total += labels.size(0)
+            correct += (predicted == labels).sum().item()
+    if rank == 0:
+        print(
+            f"Accuracy of the network on the 10000 test images: {100 * correct / total:.2f}%"
+        )
 
     dist.destroy_process_group()
 

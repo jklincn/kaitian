@@ -1,7 +1,7 @@
 #include "device.hpp"
 
 #include "scheduler.hpp"
-#include "support/cambricon_mlu.hpp"
+#include "support/support.hpp"
 
 struct KaiTianAllocator final : at::Allocator {
     KaiTianAllocator() = default;

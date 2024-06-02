@@ -4,8 +4,6 @@
 #include "scheduler.hpp"
 #include "util.hpp"
 
-#ifdef SUPPORT_CAMBRICON_MLU
-
 void find_mlu() {
     unsigned int count;
     cnrtGetDeviceCount(&count);
@@ -16,7 +14,7 @@ void find_mlu() {
         cnrtGetDeviceProperties(&prop, i);
         std::string bdf =
             get_pcie_bdf(prop.pciDomainID, prop.pciBusID, prop.pciDeviceID);
-        // 检查设备健康状态
+        // Check the health status of the device
         cndevCardHealthState_t health;
         health.version = CNDEV_VERSION_5;
         cndevCheckErrors(cndevGetCardHealthState(&health, i));
@@ -26,11 +24,11 @@ void find_mlu() {
                       << " health state in problem" << prop.name << std::endl;
             continue;
         }
-        kaitian::Device mlu_device("Cambricon " + std::string(prop.name), bdf,
-                                   kaitian::DeviceType::MLU,
-                                   prop.availableGlobalMemorySize,
-                                   c10::Device(c10::DeviceType::MLU, i));
+        kaitian::Device mlu_device(
+            "Cambricon " + std::string(prop.name), bdf,
+            kaitian::DeviceType::MLU,
+            (unsigned long)prop.availableGlobalMemorySize * 1024 * 1024,
+            c10::Device(c10::DeviceType::MLU, i));
         scheduler.add_device(mlu_device);
     }
 }
-#endif

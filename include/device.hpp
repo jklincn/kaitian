@@ -29,28 +29,28 @@ c10::Device kaitian_device();
 
 namespace kaitian {
 
-typedef enum { MLU = 1 } DeviceType;
+typedef enum { CUDA, MLU } DeviceType;
 
 class Device {
    public:
     Device(const std::string& name, const std::string& bdf,
-           const DeviceType& type, unsigned int memory_size,
+           const DeviceType& type, unsigned long memory_capacity,
            const c10::Device& device)
         : _name(name),
           _bdf(bdf),
           _type(type),
-          _memory_capacity(memory_size),
+          _memory_capacity(memory_capacity),
           _device(device) {};
     std::string name() { return _name; }
     std::string bdf() { return _bdf; }
     c10::Device device() { return _device; }
-    unsigned int memory_capacity() { return _memory_capacity; }
+    unsigned long memory_capacity() { return _memory_capacity; }
 
    private:
     std::string _name;
     std::string _bdf;
     DeviceType _type;
-    unsigned int _memory_capacity;
+    unsigned long _memory_capacity;
     c10::Device _device;
 };
 }  // namespace kaitian

@@ -58,9 +58,7 @@ def train(rank, world_size):
             optimizer.step()
 
         if (epoch + 1) % 10 == 0:
-            print(
-                f"Rank {rank}, Epoch [{epoch+1}/{num_epochs}], Loss: {loss.item():.4f}"
-            )
+            print(f"Rank {rank}, Epoch {epoch+1}/{num_epochs}, Loss: {loss.item():.4f}")
 
     dist.destroy_process_group()
 

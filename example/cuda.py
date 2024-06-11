@@ -1,32 +1,33 @@
-import os
-
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.optim as optim
-import torch_mlu
-import torch_kaitian
 import torchvision
 import torchvision.transforms as transforms
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torchvision import models
 
-num_epochs = 5
+num_epochs = 1
 lr = 0.001
 batch_size = 64
-device = torch_kaitian.device()
+device = "cuda"
 
 
 def setup(rank, size):
-    os.environ["MASTER_ADDR"] = "localhost"
-    os.environ["MASTER_PORT"] = "29502"
-    dist.init_process_group("kaitian", rank=rank, world_size=size)
-    torch_kaitian.set_device(rank)
+    dist.init_process_group("nccl", rank=rank, world_size=size)
+    torch.cuda.set_device(rank)
+
+
+def set_seed(seed):
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.backends.cudnn.deterministic = True
 
 
 def run(rank, world_size):
     setup(rank, world_size)
+    set_seed(world_size)  # using a random number is also acceptable
     transform = transforms.Compose(
         [
             transforms.Resize(256),
@@ -37,7 +38,7 @@ def run(rank, world_size):
     )
 
     train_set = torchvision.datasets.CIFAR10(
-        root="./data", train=True, download=True, transform=transform
+        root="./data", train=True, transform=transform
     )
     train_sampler = torch.utils.data.distributed.DistributedSampler(
         train_set, num_replicas=world_size, rank=rank
@@ -47,7 +48,7 @@ def run(rank, world_size):
     )
 
     test_set = torchvision.datasets.CIFAR10(
-        root="./data", train=False, download=True, transform=transform
+        root="./data", train=False, transform=transform
     )
     test_sampler = torch.utils.data.distributed.DistributedSampler(
         test_set, num_replicas=world_size, rank=rank, shuffle=False
@@ -76,9 +77,9 @@ def run(rank, world_size):
             if i % 100 == 0:
                 if rank == 0:
                     print(
-                        f"Rank {rank}, Epoch {epoch+1}/{num_epochs}, Iteration {i}, Loss: {loss.item():.4f}"
+                        f"Rank {rank}, Epoch {epoch+1}/{num_epochs}, Iteration {i}, Loss: {loss.item():.4f}",
+                        flush=True,
                     )
-
     model.eval()
     total = 0
     correct = 0
@@ -90,15 +91,19 @@ def run(rank, world_size):
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
     if rank == 0:
-        print(
-            f"Accuracy of the network on the 10000 test images: {100 * correct / total:.2f}%"
-        )
-
+        # Accuracy: 75.84%
+        print(f"Accuracy: {100 * correct / total:.2f}%", flush=True)
     dist.destroy_process_group()
 
 
 if __name__ == "__main__":
-    world_size = torch_kaitian.init()
+    world_size = torch.cuda.device_count()
+
+    # Download in advance to avoid duplicate downloads by multiple processes
+    torchvision.datasets.CIFAR10(root="./data", train=True, download=True)
+    torchvision.datasets.CIFAR10(root="./data", train=False, download=True)
+    models.mobilenet_v2(weights="MobileNet_V2_Weights.DEFAULT")
+
     mp.spawn(
         run,
         args=(world_size,),

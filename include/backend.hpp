@@ -50,8 +50,11 @@ class ProcessGroupKaiTian : public ProcessGroup {
 
    private:
     c10::intrusive_ptr<Store> store_;
-#ifdef SUPPORT_CAMBRICON_MLU
+#ifdef KAITIAN_MLU
     c10::intrusive_ptr<ProcessGroup> cncl_process_group_;
+#endif
+#ifdef KAITIAN_CUDA
+    c10::intrusive_ptr<ProcessGroup> nccl_process_group_;
 #endif
 };
 
@@ -71,8 +74,11 @@ class WorkKaiTian : public Work {
     c10::intrusive_ptr<at::ivalue::Future> future_;
     at::Device device_;
     OperationType operation_;
-#ifdef SUPPORT_CAMBRICON_MLU
+#ifdef KAITIAN_MLU
     c10::intrusive_ptr<Work> cncl_work_;
+#endif
+#ifdef KAITIAN_CUDA
+    c10::intrusive_ptr<Work> nccl_work_;
 #endif
 };
 

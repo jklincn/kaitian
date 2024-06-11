@@ -1,14 +1,17 @@
+import time
+
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.optim as optim
-import torch_kaitian
 import torchvision.transforms as transforms
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torchvision import datasets, models
+
+import torch_kaitian
 
 num_epochs = 1
 lr = 0.001
@@ -96,9 +99,11 @@ if __name__ == "__main__":
     datasets.CIFAR10(root="./data", train=True, download=True)
     datasets.CIFAR10(root="./data", train=False, download=True)
     models.mobilenet_v2(weights="MobileNet_V2_Weights.DEFAULT")
-
+    start_time = time.time()
     mp.spawn(
         run,
         args=(world_size,),
         nprocs=world_size,
     )
+    end_time = time.time()
+    print(f"Time spent: {(end_time - start_time):.6f} seconds")

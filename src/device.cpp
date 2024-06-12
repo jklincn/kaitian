@@ -2,8 +2,6 @@
 
 #include <c10/core/DeviceType.h>
 
-#include <cstdlib>
-
 #include "support.hpp"
 
 struct KaiTianAllocator final : at::Allocator {
@@ -67,7 +65,6 @@ struct KaiTianDeviceGuardImpl final
     Stream getStream(Device) const noexcept override {
         return Stream(Stream::DEFAULT, Device(kPrivateUse1, -1));
     }
-    // NB: These do NOT set the current device
     Stream exchangeStream(Stream) const noexcept override {
         return Stream(Stream::DEFAULT, Device(kPrivateUse1, -1));
     }
@@ -76,31 +73,13 @@ struct KaiTianDeviceGuardImpl final
     void destroyEvent(void* /*event*/, const DeviceIndex /*device_index*/)
         const noexcept override {}
 
-    // Stream-related functions
     bool queryStream(const Stream& /*stream*/) const override { return true; }
-    void synchronizeStream(const Stream& /*stream*/) const override {
-        // Don't wait for anything.
-    }
-#ifdef KAITIAN_MLU
-    torch_mlu::mlu::MLUGuardImpl mlu_guard;
-#endif
+    void synchronizeStream(const Stream& /*stream*/) const override {}
 };
+
 C10_REGISTER_GUARD_IMPL(PrivateUse1, KaiTianDeviceGuardImpl);
 }  // namespace at
-
-void set_device(c10::DeviceIndex rank) {
-#ifdef KAITIAN_MLU
-    torch_mlu::setDevice(rank);
-    return;
-#endif
-#ifdef KAITIAN_CUDA
-    c10::cuda::set_device(rank);
-    return;
-#endif
-}
 
 TORCH_LIBRARY_IMPL(aten, PrivateUse1, m) {
     m.impl("empty_strided", &kaitian_empty_strided);
 }
-
-void init_device(pybind11::module& m) { m.def("set_device", &set_device); }

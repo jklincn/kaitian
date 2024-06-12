@@ -116,6 +116,7 @@ def find_mlu():
         exit()
 
 
+# NB: currently only test GTX1080 with Driver Version 520.61.05 (CUDA 11.8)
 def docker_run_cuda(file):
     client = docker.from_env()
     image = "jklincn/kaitian:cuda-torch1.13.1-cuda11.6-cudnn8-devel"
@@ -145,7 +146,7 @@ def docker_run_cuda(file):
             ],
             working_dir="/",
             image=image,
-            command=f"python /{os.path.basename(file)}",
+            command=f"mpirun -np 1 --allow-run-as-root python /{os.path.basename(file)}",
         )
         # read container output until container exit
         for line in node_cuda.logs(stream=True, follow=True):
@@ -167,7 +168,7 @@ def docker_run_cuda(file):
                 continue
 
 
-# note: currently only test MLU370
+# NB: currently only test MLU370
 def docker_run_mlu(file):
     client = docker.from_env()
     image = "jklincn/kaitian:mlu-v1.17.0-torch1.13.1-ubuntu20.04-py310"
@@ -199,7 +200,7 @@ def docker_run_mlu(file):
             ],
             working_dir="/",
             image=image,
-            command=f"python /{os.path.basename(file)}",
+            command=f"mpirun -np 1 --allow-run-as-root python /{os.path.basename(file)}",
         )
         # read container output until container exit
         for line in node_mlu.logs(stream=True, follow=True):
@@ -211,8 +212,8 @@ def docker_run_mlu(file):
     finally:
         while True:
             try:
-                node_cuda = client.containers.get("node_mlu")
-                node_cuda.remove(force=True)
+                node_mlu = client.containers.get("node_mlu")
+                node_mlu.remove(force=True)
                 return
             except docker.errors.NotFound:
                 continue
@@ -235,27 +236,31 @@ def check_cuda():
     except docker.errors.ImageNotFound:
         print(f"Image {image} does not exist.")
         print(f"Building {image}...")
-        try:
-            _, build_generator = client.images.build(
-                path=os.path.dirname(os.path.abspath(__file__)),
-                tag=image,
-                rm=True,
-                buildargs={"IMAGE": base_image, "DEVICE": "CUDA"},
-            )
-            # for chunk in build_generator:
-            #     if "stream" in chunk:
-            #         stream_output = chunk["stream"].strip()
-            #         if "Step" in stream_output or "Successfully" in stream_output:
-            #             print(stream_output, flush=True)
-            print(f"Build {image} successfully.")
-        except docker.errors.BuildError as e:
-            print("image build error.")
-            for chunk in e.build_log:
-                if "stream" in chunk:
-                    print(chunk["stream"].strip())
-                elif "error" in chunk:
-                    print(chunk["error"].strip())
-            exit()
+
+        build_command = [
+            "docker",
+            "build",
+            "-t",
+            image,
+            "--build-arg",
+            f"IMAGE={base_image}",
+            "--build-arg",
+            "DEVICE=CUDA",
+            os.path.dirname(os.path.abspath(__file__)),
+        ]
+        process = subprocess.Popen(
+            build_command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
+        while True:
+            output = process.stdout.readline()
+            if output == "" and process.poll() is not None:
+                break
+            if output:
+                print(output.strip(), flush=True)
 
     print(f"Use CUDA Image: {image}")
 
@@ -279,22 +284,31 @@ def check_mlu():
     except docker.errors.ImageNotFound:
         print(f"Image {image} does not exist.")
         print(f"Building {image}...")
-        try:
-            client.images.build(
-                path=os.path.dirname(os.path.abspath(__file__)),
-                tag=image,
-                rm=True,
-                buildargs={"IMAGE": base_image, "DEVICE": "MLU"},
-            )
-            print(f"Build {image} successfully.")
-        except docker.errors.BuildError as e:
-            print("image build error.")
-            for chunk in e.build_log:
-                if "stream" in chunk:
-                    print(chunk["stream"].strip())
-                elif "error" in chunk:
-                    print(chunk["error"].strip())
-            exit()
+
+        build_command = [
+            "docker",
+            "build",
+            "-t",
+            image,
+            "--build-arg",
+            f"IMAGE={base_image}",
+            "--build-arg",
+            "DEVICE=MLU",
+            os.path.dirname(os.path.abspath(__file__)),
+        ]
+        process = subprocess.Popen(
+            build_command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+
+        while True:
+            output = process.stdout.readline()
+            if output == "" and process.poll() is not None:
+                break
+            if output:
+                print(output.strip(), flush=True)
 
     print(f"Use MLU Image: {image}")
 
@@ -338,6 +352,12 @@ def get_args():
     parser = argparse.ArgumentParser(description="KaiTian Launcher")
     parser.add_argument(
         "FILE", help="Your training code, for example: python run.py train.py"
+    )
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="enable quiet mode, less output is printed",
     )
     args = parser.parse_args()
 

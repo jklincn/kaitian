@@ -7,11 +7,11 @@ from torch.utils import cpp_extension
 # kaitian config
 kaitian_path = os.path.dirname(os.path.abspath(__file__))
 sources = glob.glob(f"{kaitian_path}/src/*.cpp")
-include_dirs = [f"{kaitian_path}/include"]
-library_dirs = []
-libraries = []
+include_dirs = [f"{kaitian_path}/include", f"/opt/openmpi/include"]
+library_dirs = [f"/opt/openmpi/lib"]
+libraries = ["mpi"]
 define_macros = []
-runtime_library_dirs = []
+runtime_library_dirs = [f"/opt/openmpi/lib"]
 
 
 def mlu_support():
@@ -19,7 +19,7 @@ def mlu_support():
     try:
         neuware_home = os.getenv("NEUWARE_HOME")
         if neuware_home is None:
-            raise RuntimeError("Environment variable NEUWARE_HOME is not set.")
+            raise EnvironmentError("Environment variable NEUWARE_HOME is not set.")
         if not os.path.exists(neuware_home):
             raise FileNotFoundError(
                 f"Cambricon Neuware SDK is not installed. Search path: {neuware_home}"
@@ -76,10 +76,6 @@ def format_list(name, items):
     formatted_items = ",\n  ".join(f"'{item}'" for item in items)
     return f"{name} = [\n  {formatted_items}\n]"
 
-
-# print(format_list("include_dirs", include_dirs))
-# print(format_list("library_dirs", library_dirs))
-# print(format_list("libraries", libraries))
 
 module = cpp_extension.CppExtension(
     name="torch_kaitian._C",

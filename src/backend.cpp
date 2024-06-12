@@ -101,7 +101,7 @@ c10::intrusive_ptr<ProcessGroup> ProcessGroupKaiTian::createProcessGroupKaiTian(
 
 }  // namespace c10d
 
-void init_backend(pybind11::module& m) {
+PYBIND11_MODULE(_C, m) {
     m.def("createProcessGroupKaiTian",
           &c10d::ProcessGroupKaiTian::createProcessGroupKaiTian);
 }

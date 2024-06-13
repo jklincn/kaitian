@@ -1,3 +1,4 @@
+import os
 import time
 
 import torch
@@ -19,8 +20,10 @@ batch_size = 64
 device = torch_kaitian.device()
 
 
-def setup(rank, size):
-    dist.init_process_group("kaitian", rank=rank, world_size=size)
+def setup(rank, world_size):
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "12355"
+    dist.init_process_group("kaitian", rank=rank, world_size=world_size)
     torch_kaitian.set_device(rank)
 
 

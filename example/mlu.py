@@ -1,3 +1,4 @@
+import os
 import time
 
 import torch
@@ -18,8 +19,10 @@ batch_size = 64
 device = "mlu"
 
 
-def setup(rank, size):
-    dist.init_process_group("cncl", rank=rank, world_size=size)
+def setup(rank, world_size):
+    os.environ["MASTER_ADDR"] = "localhost"
+    os.environ["MASTER_PORT"] = "12355"
+    dist.init_process_group("cncl", rank=rank, world_size=world_size)
     torch.mlu.set_device(rank)
 
 

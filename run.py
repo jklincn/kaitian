@@ -3,18 +3,25 @@ import json
 import os
 import shutil
 import subprocess
-
 import docker
+import re
 
 cuda_nums = 0
 mlu_nums = 0
 total_nums = 0
+hosts = []
 
-
-USE_CUDA = True if os.environ.get("USE_CUDA", 0) == "1" else False
-USE_MLU = True if os.environ.get("USE_MLU", 0) == "1" else False
+USE_CUDA = True if os.environ.get("USE_CUDA", "1") == "1" else False
+USE_MLU = True if os.environ.get("USE_MLU", "1") == "1" else False
 MASTER_ADDR = ""
 MASTER_PORT = os.environ.get("MASTER_PORT", 12355)
+
+CUDA_BASE_IMAGE = "pytorch/pytorch:1.13.1-cuda11.6-cudnn8-devel"
+CUDA_IMAGE = "jklincn/kaitian:cuda-torch1.13.1-cuda11.6-cudnn8"
+MLU_BASE_IMAGE = (
+    "yellow.hub.cambricon.com/pytorch/pytorch:v1.17.0-torch1.13.1-ubuntu20.04-py310"
+)
+MLU_IMAGE = "jklincn/kaitian:mlu-torch1.13.1"
 
 
 def find_cuda():
@@ -119,18 +126,13 @@ def find_mlu():
 # NB: currently only test GTX1080 with Driver Version 520.61.05 (CUDA 11.8)
 def docker_run_cuda(file):
     client = docker.from_env()
-    image = "jklincn/kaitian:cuda-torch1.13.1-cuda11.6-cudnn8-devel"
-    try:
-        node_cuda = client.containers.get("node_cuda")
-        node_cuda.remove(force=True)
-    except docker.errors.NotFound:
-        pass
     try:
         print("Running CUDA container...")
         node_cuda = client.containers.run(
             detach=True,
             network="kaitian",
             name="node_cuda",
+            hostname="node_cuda",
             environment={
                 "MASTER_ADDR": MASTER_ADDR,
                 "MASTER_PORT": MASTER_PORT,
@@ -145,38 +147,16 @@ def docker_run_cuda(file):
                 f"{os.path.dirname(os.path.abspath(file))}/data:/data",
             ],
             working_dir="/",
-            image=image,
-            command=f"mpirun -np 1 --allow-run-as-root python /{os.path.basename(file)}",
+            image=CUDA_IMAGE,
         )
-        # read container output until container exit
-        for line in node_cuda.logs(stream=True, follow=True):
-            print(line.decode().strip(), flush=True)
-    except KeyboardInterrupt:
-        print("Received KeyboardInterrupt. Stop and remove all containers.")
-
+        return node_cuda
     except Exception as e:
         print("docker_run_cuda error: ", e)
-    finally:
-        while True:
-            try:
-                node_cuda = client.containers.get("node_cuda")
-                node_cuda.remove(force=True)
-                return
-            except docker.errors.NotFound:
-                continue
-            except UnboundLocalError:
-                continue
 
 
 # NB: currently only test MLU370
 def docker_run_mlu(file):
     client = docker.from_env()
-    image = "jklincn/kaitian:mlu-v1.17.0-torch1.13.1-ubuntu20.04-py310"
-    try:
-        node_mlu = client.containers.get("node_mlu")
-        node_mlu.remove(force=True)
-    except docker.errors.NotFound:
-        pass
     try:
         device = ["/dev/cambricon_ctl"]
         for i in range(mlu_nums):
@@ -186,6 +166,7 @@ def docker_run_mlu(file):
             detach=True,
             network="kaitian",
             name="node_mlu",
+            hostname="node_mlu",
             environment={
                 "MASTER_ADDR": MASTER_ADDR,
                 "MASTER_PORT": MASTER_PORT,
@@ -199,51 +180,34 @@ def docker_run_mlu(file):
                 f"{os.path.dirname(os.path.abspath(file))}/data:/data",
             ],
             working_dir="/",
-            image=image,
-            command=f"mpirun -np 1 --allow-run-as-root python /{os.path.basename(file)}",
+            image=MLU_IMAGE,
         )
-        # read container output until container exit
-        for line in node_mlu.logs(stream=True, follow=True):
-            print(line.decode().strip(), flush=True)
-    except KeyboardInterrupt:
-        print("Received KeyboardInterrupt. Stop and remove all containers.")
+        return node_mlu
     except Exception as e:
         print("docker_run_mlu error: ", e)
-    finally:
-        while True:
-            try:
-                node_mlu = client.containers.get("node_mlu")
-                node_mlu.remove(force=True)
-                return
-            except docker.errors.NotFound:
-                continue
-            except UnboundLocalError:
-                continue
 
 
 def check_cuda():
     client = docker.from_env()
-    base_image = "pytorch/pytorch:1.13.1-cuda11.6-cudnn8-devel"
     try:
-        client.images.get(base_image)
+        client.images.get(CUDA_BASE_IMAGE)
     except docker.errors.ImageNotFound:
-        print(f"Image {base_image} does not exist.")
-        print(f"You must `docker pull {image}` first.")
+        print(f"Image {CUDA_BASE_IMAGE} does not exist.")
+        print(f"You must `docker pull {CUDA_BASE_IMAGE}` first.")
         exit()
-    image = "jklincn/kaitian:cuda-torch1.13.1-cuda11.6-cudnn8-devel"
     try:
-        client.images.get(image)
+        client.images.get(CUDA_IMAGE)
     except docker.errors.ImageNotFound:
-        print(f"Image {image} does not exist.")
-        print(f"Building {image}...")
+        print(f"Image {CUDA_IMAGE} does not exist.")
+        print(f"Building {CUDA_IMAGE}...")
 
         build_command = [
             "docker",
             "build",
             "-t",
-            image,
+            CUDA_IMAGE,
             "--build-arg",
-            f"IMAGE={base_image}",
+            f"IMAGE={CUDA_BASE_IMAGE}",
             "--build-arg",
             "DEVICE=CUDA",
             os.path.dirname(os.path.abspath(__file__)),
@@ -258,40 +222,45 @@ def check_cuda():
         while True:
             output = process.stdout.readline()
             if output == "" and process.poll() is not None:
+                exit_code = process.poll()
+                if exit_code != 0:
+                    exit("image build error: ", exit_code)
                 break
             if output:
                 print(output.strip(), flush=True)
 
-    print(f"Use CUDA Image: {image}")
+    print(f"Use CUDA Image: {CUDA_IMAGE}")
+    hosts.append("node_cuda")
+    try:
+        node_cuda = client.containers.get("node_cuda")
+        node_cuda.remove(force=True)
+    except docker.errors.NotFound:
+        pass
 
 
 def check_mlu():
     client = docker.from_env()
-    base_image = (
-        "yellow.hub.cambricon.com/pytorch/pytorch:v1.17.0-torch1.13.1-ubuntu20.04-py310"
-    )
     try:
-        client.images.get(base_image)
+        client.images.get(MLU_BASE_IMAGE)
     except docker.errors.ImageNotFound:
-        print(f"Image {base_image} does not exist.")
+        print(f"Image {MLU_BASE_IMAGE} does not exist.")
         print(
-            f"You must get {base_image} first. See https://sdk.cambricon.com/download?component_name=PyTorch"
+            f"You must get {MLU_BASE_IMAGE} first. See https://sdk.cambricon.com/download?component_name=PyTorch"
         )
         exit()
-    image = "jklincn/kaitian:mlu-v1.17.0-torch1.13.1-ubuntu20.04-py310"
     try:
-        client.images.get(image)
+        client.images.get(MLU_IMAGE)
     except docker.errors.ImageNotFound:
-        print(f"Image {image} does not exist.")
-        print(f"Building {image}...")
+        print(f"Image {MLU_IMAGE} does not exist.")
+        print(f"Building {MLU_IMAGE}...")
 
         build_command = [
             "docker",
             "build",
             "-t",
-            image,
+            MLU_IMAGE,
             "--build-arg",
-            f"IMAGE={base_image}",
+            f"IMAGE={MLU_BASE_IMAGE}",
             "--build-arg",
             "DEVICE=MLU",
             os.path.dirname(os.path.abspath(__file__)),
@@ -306,11 +275,20 @@ def check_mlu():
         while True:
             output = process.stdout.readline()
             if output == "" and process.poll() is not None:
+                exit_code = process.poll()
+                if exit_code != 0:
+                    exit("image build error: ", exit_code)
                 break
             if output:
                 print(output.strip(), flush=True)
 
-    print(f"Use MLU Image: {image}")
+    print(f"Use MLU Image: {MLU_IMAGE}")
+    hosts.append("node_mlu")
+    try:
+        node_mlu = client.containers.get("node_mlu")
+        node_mlu.remove(force=True)
+    except docker.errors.NotFound:
+        pass
 
 
 def find_device():
@@ -321,30 +299,143 @@ def find_device():
     if USE_CUDA:
         cuda_nums = find_cuda()
         check_cuda()
+        print("-----------------------------")
     if USE_MLU:
         mlu_nums = find_mlu()
         check_mlu()
+        print("-----------------------------")
     total_nums = cuda_nums + mlu_nums
+
+
+def collect_exec_output(execution, description):
+    for line in execution.output:
+        print(f"[{description}] {line.decode().strip()}", flush=True)
+
+
+def run_container(host, file):
+    client = docker.from_env()
+    match host:
+        case "node_cuda":
+            print("Running CUDA container...")
+            return client.containers.run(
+                detach=True,
+                network="kaitian",
+                name="node_cuda",
+                hostname="node_cuda",
+                environment={
+                    "MASTER_ADDR": MASTER_ADDR,
+                    "MASTER_PORT": MASTER_PORT,
+                    "TOTAL_NUMS": total_nums,
+                },
+                device_requests=[
+                    docker.types.DeviceRequest(
+                        device_ids=["all"], capabilities=[["gpu"]]
+                    )
+                ],
+                shm_size="16G",
+                volumes=[
+                    f"{os.path.abspath(file)}:/{os.path.basename(file)}",
+                    f"{os.path.dirname(os.path.abspath(file))}/data:/data",
+                ],
+                working_dir="/",
+                image=CUDA_IMAGE,
+            )
+        case "node_mlu":
+            print("Running MLU container...")
+            # Compatible with MLU370
+            device = ["/dev/cambricon_ctl"]
+            for i in range(mlu_nums):
+                device.extend([f"/dev/cambricon_dev{i}", f"/dev/cambricon_ipcm{i}"])
+            return client.containers.run(
+                detach=True,
+                network="kaitian",
+                name="node_mlu",
+                hostname="node_mlu",
+                environment={
+                    "MASTER_ADDR": MASTER_ADDR,
+                    "MASTER_PORT": MASTER_PORT,
+                    # "MLU_NUMS": mlu_nums,
+                    "TOTAL_NUMS": total_nums,
+                },
+                devices=device,
+                shm_size="16G",
+                volumes=[
+                    f"{os.path.abspath(file)}:/{os.path.basename(file)}",
+                    f"{os.path.dirname(os.path.abspath(file))}/data:/data",
+                ],
+                working_dir="/",
+                image=MLU_IMAGE,
+            )
 
 
 def docker_run(file):
     global MASTER_ADDR
     client = docker.from_env()
+    node_cuda = None
+    node_mlu = None
+    nodes = {}
+    hosts_nums = len(hosts)
+    # create network
     try:
-        try:
-            network = client.networks.get("kaitian")
-        except docker.errors.NotFound:
-            network = client.networks.create("kaitian", driver="bridge")
+        network = client.networks.get("kaitian")
+    except docker.errors.NotFound:
+        network = client.networks.create("kaitian", driver="bridge")
+    # create container
+    if hosts_nums > 0:
+        MASTER_ADDR = hosts[0]
+        # for host in hosts:
+        #     nodes[host] = run_container(host, file)
+    else:
+        exit("No device available.")
+    try:
         if cuda_nums > 0:
-            MASTER_ADDR = "node_cuda"
-            docker_run_cuda(file)
+            node_cuda = docker_run_cuda(file)
         if mlu_nums > 0:
-            if MASTER_ADDR == "":
-                MASTER_ADDR = "node_mlu"
-            docker_run_mlu(file)
+            node_mlu = docker_run_mlu(file)
+        pub_key_path = "/home/mpiuser/.ssh/id_ed25519.pub"
+        authorized_keys_path = "/home/mpiuser/.ssh/authorized_keys"
+        node_cuda_pub_key = node_cuda.exec_run(f"cat {pub_key_path}").output.decode()
+        node_mlu_pub_key = node_mlu.exec_run(f"cat {pub_key_path}").output.decode()
+        node_cuda.exec_run(
+            f"/bin/bash -c 'echo \"{node_mlu_pub_key.strip()}\" >> {authorized_keys_path}'"
+        )
+        node_mlu.exec_run(
+            f"/bin/bash -c 'echo \"{node_cuda_pub_key.strip()}\" >> {authorized_keys_path}'"
+        )
+        if node_cuda:
+            execution = node_cuda.exec_run(
+                cmd=f"mpirun -n {hosts_nums} --prefix /opt/openmpi --output tag-detailed,merge -host {','.join(hosts)} python /{os.path.basename(file)}",
+                detach=False,
+                stream=True,
+            )
+        print("--------- Output -----------")
+        pattern = re.compile(r"\[\d+,\d+\]\[(.+?):\d+\]<stdout>:\s(.+)")
+        max_width = max(len(host) for host in hosts)
+        for line in execution.output:
+            decoded_line = line.decode().strip()
+            match = pattern.match(decoded_line)
+            if match:
+                node_name = match.group(1)
+                message = match.group(2)
+                print(f"[{node_name:<{max_width}}] {message}", flush=True)
+            else:
+                continue
+
     except docker.errors.APIError as e:
         print("docker run error: ", e)
+    except KeyboardInterrupt:
+        print("Received KeyboardInterrupt. Stop and remove all containers.")
     finally:
+        if node_cuda:
+            try:
+                node_cuda.remove(force=True)
+            except Exception as ex:
+                print("Failed to remove node_cuda:", ex)
+        if node_mlu:
+            try:
+                node_mlu.remove(force=True)
+            except Exception as ex:
+                print("Failed to remove node_mlu:", ex)
         network.remove()
 
 

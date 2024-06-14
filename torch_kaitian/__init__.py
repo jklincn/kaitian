@@ -17,14 +17,12 @@ def device():
 
 def set_device(rank):
     if rank == 0:
-        # _C.gloo_init()
-        pass
+        _C.gloo_init(device_type)
 
     if device_type == "MLU":
         torch.mlu.set_device(rank)
     else:
         torch.cuda.set_device(rank)
-    print(f"set device: rank: {rank} {device_type}")
 
 
 def world_size():
@@ -45,7 +43,3 @@ def manual_seed(seed):
     else:
         torch.cuda.manual_seed(seed)
         torch.backends.cudnn.deterministic = True
-
-
-def gloo_init():
-    _C.gloo_init()

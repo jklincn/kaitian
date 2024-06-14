@@ -8,6 +8,9 @@
 #include <iostream>
 #include <vector>
 
+std::shared_ptr<gloo::rendezvous::Context> context;
+int rank;
+int world_size;
 void mysum(void *c_, const void *a_, const void *b_, int n) {
     printf("n=%d\r\n", n);
     int *c = static_cast<int *>(c_);
@@ -21,15 +24,17 @@ void mysum(void *c_, const void *a_, const void *b_, int n) {
     }
 }
 
-void gloo_init() {
-    auto dev = gloo::transport::tcp::CreateDevice("localhost");
+void gloo_init(const std::string &hostname) {
+    auto dev = gloo::transport::tcp::CreateDevice(hostname.c_str());
     auto fileStore = gloo::rendezvous::FileStore("/tmp/gloo");
-    const int rank = atoi(getenv("KAITIAN_RANK"));
-    const int world_size = atoi(getenv("KAITIAN_WORLD_SIZE"));
-    auto context =
-        std::make_shared<gloo::rendezvous::Context>(rank, world_size);
+    rank = atoi(getenv("KAITIAN_RANK"));
+    world_size = atoi(getenv("KAITIAN_WORLD_SIZE"));
+    context = std::make_shared<gloo::rendezvous::Context>(rank, world_size);
     context->connectFullMesh(fileStore, dev);
+    std::cout << "gloo_init success" << std::endl;
+}
 
+void test() {
     size_t elements = 4;
     std::vector<int *> inputPointers;
     std::vector<int *> outputPointers;
@@ -57,5 +62,3 @@ void gloo_init() {
         std::cout << "data[" << i << "] = " << *outputPointers[i] << std::endl;
     }
 }
-
-void test() {}

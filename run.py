@@ -4,6 +4,7 @@ import os
 import shutil
 import subprocess
 import docker
+import threading
 
 cuda_nums = 0
 mlu_nums = 0
@@ -218,13 +219,12 @@ def find_device():
 def run_container(device_type, file, rank, world_size):
     print(f"Running {device_type} container...")
     client = docker.from_env()
-    network_mode = f"container:{coordinator}" if device_type != coordinator else None
-    command = f"python -c 'import torch_kaitian;torch_kaitian.gloo_init()'"
+    command = f"python /{os.path.basename(file)}"
     match device_type:
         case "CUDA":
             return client.containers.run(
                 detach=True,
-                network=network_mode,
+                network="kaitian",
                 name=device_type,
                 environment={
                     "TOTAL_NUMS": total_nums,
@@ -253,7 +253,7 @@ def run_container(device_type, file, rank, world_size):
                 device.extend([f"/dev/cambricon_dev{i}", f"/dev/cambricon_ipcm{i}"])
             return client.containers.run(
                 detach=True,
-                network=network_mode,
+                network="kaitian",
                 name=device_type,
                 environment={
                     "TOTAL_NUMS": total_nums,
@@ -272,6 +272,14 @@ def run_container(device_type, file, rank, world_size):
                 command=command,
             )
 
+def stream_logs(container, device_type):
+    logs = []
+    for line in container.logs(stream=True, follow=True):
+        logs.append(line.decode().strip())
+        print(f"[{device_type}] {line.decode().strip()}", flush=True)
+    with open(f"log_{device_type}.txt", "w") as log_file:
+        log_file.write("\n".join(logs))
+    
 
 def docker_run(file):
     global coordinator
@@ -279,6 +287,11 @@ def docker_run(file):
     containers = {}
     if len(device_types) == 0:
         exit("No device available.")
+    # create network
+    try:
+        network = client.networks.get("kaitian")
+    except docker.errors.NotFound:
+        network = client.networks.create("kaitian", driver="bridge")
     # create volume
     try:
         volume = client.volumes.get("kaitian")
@@ -298,21 +311,17 @@ def docker_run(file):
             containers[device_type] = run_container(
                 device_type, file, rank, len(device_types)
             )
-        # run task
         print("--------- Output -----------")
-        # output = {}
-        # for device_type in device_types:
-        #     output[device_type] = containers[device_type].exec_run(
-        #         cmd="python -c 'import torch_kaitian;torch_kaitian.gloo_init()'",
-        #         detach=True,
-        #         stream=True,
-        #     )
-        #     # for line in output[device_type].output:
-        #     #     print(line.decode().strip())
-        for device_type in device_types:
-            for line in containers[device_type].logs(stream=True, follow=True):
-                print(f"[{device_type}] {line.decode().strip()}", flush=True)
+        threads = []
+        for device_type, container in containers.items():
+            thread = threading.Thread(target=stream_logs, args=(container, device_type))
+            thread.start()
+            threads.append(thread)
+        for thread in threads:
+            thread.join()
         print("--------- Finish -----------")
+        for device_type in device_types:
+            print(f"{device_type} log file path: {os.path.dirname(os.path.abspath(__file__))}/log_{device_type}.txt", flush=True)
 
     except KeyboardInterrupt:
         print("Received KeyboardInterrupt. Stop and remove all containers.")
@@ -323,6 +332,7 @@ def docker_run(file):
                 node.remove(force=True)
             except docker.errors.NotFound:
                 continue
+        network.remove()
         volume.remove()
 
 

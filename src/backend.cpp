@@ -101,7 +101,7 @@ c10::intrusive_ptr<ProcessGroup> ProcessGroupKaiTian::createProcessGroupKaiTian(
 
 }  // namespace c10d
 
-extern int gloo_init();
+extern void gloo_init(const std::string&);
 
 PYBIND11_MODULE(_C, m) {
     m.def("createProcessGroupKaiTian",

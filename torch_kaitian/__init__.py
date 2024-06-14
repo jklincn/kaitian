@@ -1,6 +1,6 @@
 import os
-
 import torch
+import torch.distributed as dist
 
 from . import _C
 
@@ -17,12 +17,14 @@ def device():
 
 def set_device(rank):
     if rank == 0:
-        # Automatic init and finalize: https://mpi4py.readthedocs.io/en/stable/mpi4py.run.html
-        from mpi4py import MPI
+        # _C.gloo_init()
+        pass
+
     if device_type == "MLU":
         torch.mlu.set_device(rank)
     else:
         torch.cuda.set_device(rank)
+    print(f"set device: rank: {rank} {device_type}")
 
 
 def world_size():
@@ -43,3 +45,7 @@ def manual_seed(seed):
     else:
         torch.cuda.manual_seed(seed)
         torch.backends.cudnn.deterministic = True
+
+
+def gloo_init():
+    _C.gloo_init()

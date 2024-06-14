@@ -1,21 +1,18 @@
 import argparse
 import json
 import os
-import re
 import shutil
 import subprocess
-
 import docker
 
 cuda_nums = 0
 mlu_nums = 0
 total_nums = 0
-hosts = []
+device_types = []
+coordinator = ""
 
 USE_CUDA = True if os.environ.get("USE_CUDA", "1") == "1" else False
 USE_MLU = True if os.environ.get("USE_MLU", "1") == "1" else False
-MASTER_ADDR = ""
-MASTER_PORT = os.environ.get("MASTER_PORT", 12355)
 
 CUDA_BASE_IMAGE = "pytorch/pytorch:1.13.1-cuda11.6-cudnn8-devel"
 CUDA_IMAGE = "jklincn/kaitian:0.0.0-cuda"
@@ -150,7 +147,7 @@ def check_cuda():
                 print(output.strip(), flush=True)
 
     print(f"Use CUDA Image: {CUDA_IMAGE}")
-    hosts.append("node_cuda")
+    device_types.append("CUDA")
 
 
 def check_mlu():
@@ -197,7 +194,7 @@ def check_mlu():
                 print(output.strip(), flush=True)
 
     print(f"Use MLU Image: {MLU_IMAGE}")
-    hosts.append("node_mlu")
+    device_types.append("MLU")
 
 
 def find_device():
@@ -218,20 +215,21 @@ def find_device():
     total_nums = cuda_nums + mlu_nums
 
 
-def run_container(host, file):
+def run_container(device_type, file, rank, world_size):
+    print(f"Running {device_type} container...")
     client = docker.from_env()
-    match host:
-        case "node_cuda":
-            print("Running CUDA container...")
+    network_mode = f"container:{coordinator}" if device_type != coordinator else None
+    command = f"python -c 'import torch_kaitian;torch_kaitian.gloo_init()'"
+    match device_type:
+        case "CUDA":
             return client.containers.run(
                 detach=True,
-                network="kaitian",
-                name="node_cuda",
-                hostname="node_cuda",
+                network=network_mode,
+                name=device_type,
                 environment={
-                    "MASTER_ADDR": MASTER_ADDR,
-                    "MASTER_PORT": MASTER_PORT,
                     "TOTAL_NUMS": total_nums,
+                    "KAITIAN_RANK": rank,
+                    "KAITIAN_WORLD_SIZE": world_size,
                 },
                 device_requests=[
                     docker.types.DeviceRequest(
@@ -240,95 +238,92 @@ def run_container(host, file):
                 ],
                 shm_size="16G",
                 volumes=[
+                    "kaitian:/tmp/gloo",
                     f"{os.path.abspath(file)}:/{os.path.basename(file)}",
                     f"{os.path.dirname(os.path.abspath(file))}/data:/data",
                 ],
                 working_dir="/",
                 image=CUDA_IMAGE,
+                command=command,
             )
-        case "node_mlu":
-            print("Running MLU container...")
+        case "MLU":
             # Compatible with MLU370
             device = ["/dev/cambricon_ctl"]
             for i in range(mlu_nums):
                 device.extend([f"/dev/cambricon_dev{i}", f"/dev/cambricon_ipcm{i}"])
             return client.containers.run(
                 detach=True,
-                network="kaitian",
-                name="node_mlu",
-                hostname="node_mlu",
+                network=network_mode,
+                name=device_type,
                 environment={
-                    "MASTER_ADDR": MASTER_ADDR,
-                    "MASTER_PORT": MASTER_PORT,
                     "TOTAL_NUMS": total_nums,
+                    "KAITIAN_RANK": rank,
+                    "KAITIAN_WORLD_SIZE": world_size,
                 },
                 devices=device,
                 shm_size="16G",
                 volumes=[
+                    "kaitian:/tmp/gloo",
                     f"{os.path.abspath(file)}:/{os.path.basename(file)}",
                     f"{os.path.dirname(os.path.abspath(file))}/data:/data",
                 ],
                 working_dir="/",
                 image=MLU_IMAGE,
+                command=command,
             )
 
 
 def docker_run(file):
-    global MASTER_ADDR
+    global coordinator
     client = docker.from_env()
-    nodes = {}
-    hosts_nums = len(hosts)
-    # create network
+    containers = {}
+    if len(device_types) == 0:
+        exit("No device available.")
+    # create volume
     try:
-        network = client.networks.get("kaitian")
+        volume = client.volumes.get("kaitian")
+        volume.remove(force=True)
     except docker.errors.NotFound:
-        network = client.networks.create("kaitian", driver="bridge")
-    # create container
+        pass
+    finally:
+        volume = client.volumes.create(
+            name="kaitian",
+            driver="local",
+            driver_opts={"type": "tmpfs", "device": "tmpfs", "o": "size=100m"},
+        )
     try:
-        if hosts_nums > 0:
-            MASTER_ADDR = hosts[0]
-            for host in hosts:
-                nodes[host] = run_container(host, file)
-            # set nopassword login
-            for host in hosts:
-                pub_key_path = "/home/mpiuser/.ssh/id_ed25519.pub"
-                authorized_keys_path = "/home/mpiuser/.ssh/authorized_keys"
-                pub_key = nodes[host].exec_run(f"cat {pub_key_path}").output.decode()
-                for other_host in hosts:
-                    if host != other_host:
-                        nodes[other_host].exec_run(
-                            f"/bin/bash -c 'echo \"{pub_key.strip()}\" >> {authorized_keys_path}'"
-                        )
-            # run task
-            execution = nodes[MASTER_ADDR].exec_run(
-                cmd=f"mpirun -n {hosts_nums} --prefix /opt/openmpi --output tag-detailed,merge -host {','.join(hosts)} python /{os.path.basename(file)}",
-                detach=False,
-                stream=True,
+        coordinator = device_types[0]
+        # create container
+        for rank, device_type in enumerate(device_types):
+            containers[device_type] = run_container(
+                device_type, file, rank, len(device_types)
             )
-            print("--------- Output -----------")
-            pattern = re.compile(r"\[\d+,\d+\]\[(.+?):\d+\]<stdout>:\s(.+)")
-            max_width = max(len(host) for host in hosts)
-            for line in execution.output:
-                decoded_line = line.decode().strip()
-                match = pattern.match(decoded_line)
-                if match:
-                    node_name = match.group(1)
-                    message = match.group(2)
-                    print(f"[{node_name:<{max_width}}] {message}", flush=True)
-                else:
-                    continue
-        else:
-            exit("No device available.")
+        # run task
+        print("--------- Output -----------")
+        # output = {}
+        # for device_type in device_types:
+        #     output[device_type] = containers[device_type].exec_run(
+        #         cmd="python -c 'import torch_kaitian;torch_kaitian.gloo_init()'",
+        #         detach=True,
+        #         stream=True,
+        #     )
+        #     # for line in output[device_type].output:
+        #     #     print(line.decode().strip())
+        for device_type in device_types:
+            for line in containers[device_type].logs(stream=True, follow=True):
+                print(f"[{device_type}] {line.decode().strip()}", flush=True)
+        print("--------- Finish -----------")
+
     except KeyboardInterrupt:
         print("Received KeyboardInterrupt. Stop and remove all containers.")
     finally:
-        for host in hosts:
+        for device_type in device_types:
             try:
-                node = client.containers.get(host)
+                node = client.containers.get(device_type)
                 node.remove(force=True)
             except docker.errors.NotFound:
                 continue
-        network.remove()
+        volume.remove()
 
 
 def get_args():

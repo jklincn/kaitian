@@ -16,9 +16,6 @@ def device():
 
 
 def set_device(rank):
-    if rank == 0:
-        _C.gloo_init(device_type, rank)
-
     if device_type == "MLU":
         torch.mlu.set_device(rank)
     else:

@@ -22,17 +22,14 @@
 #include <gloo/transport/tcp/device.h>
 #include <torch/torch.h>
 
+enum GlooFunction { BROADCAST, ALLREDUCE, ALLGATHER };
+
 void _callFunction(const std::string &func_name,
                    const std::function<void()> &func);
 
-extern std::shared_ptr<gloo::rendezvous::Context> context;
-extern std::string device_type;
-extern int kaitian_rank;
-extern int kaitian_world_size;
-extern int local_rank;
-
 template <typename T>
-void runBroadcast(torch::Tensor &tensor) {
+void runBroadcast(const std::shared_ptr<gloo::rendezvous::Context> &context,
+                  torch::Tensor &tensor) {
     static_assert(std::is_same<T, float>::value ||
                       std::is_same<T, int64_t>::value ||
                       std::is_same<T, int32_t>::value,
@@ -45,8 +42,7 @@ void runBroadcast(torch::Tensor &tensor) {
     algorithm.run();
 }
 
-void kaitian_broadcast(torch::Tensor &tensor);
+void entry(const std::shared_ptr<gloo::rendezvous::Context> &context,
+           torch::Tensor &tensor, GlooFunction op);
 
 void time_spend();
-
-void gloo_init(const std::string &hostname, const int &local_rank);

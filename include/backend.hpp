@@ -10,6 +10,7 @@
 #include <torch/csrc/distributed/c10d/Utils.hpp>
 #include <torch/csrc/distributed/c10d/Work.hpp>
 
+#include "gloo.hpp"
 constexpr const char* BACKEND_NAME = "kaitian";
 
 namespace c10d {
@@ -50,6 +51,7 @@ class ProcessGroupKaiTian : public ProcessGroup {
 
    private:
     c10::intrusive_ptr<Store> store_;
+    std::shared_ptr<gloo::rendezvous::Context> context;
 #ifdef KAITIAN_MLU
     c10::intrusive_ptr<ProcessGroup> cncl_process_group_;
 #endif

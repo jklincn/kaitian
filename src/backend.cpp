@@ -5,6 +5,8 @@
 #include <pybind11/chrono.h>
 #include <torch/torch.h>
 
+#include <cstdlib>
+
 #include "ATen/ops/randint.h"
 #include "gloo.hpp"
 #include "support.hpp"
@@ -41,6 +43,16 @@ ProcessGroupKaiTian::ProcessGroupKaiTian(
     nccl_process_group_ =
         c10::make_intrusive<ProcessGroupNCCL>(store, rank, size);
 #endif
+    if (rank == 0) {
+        auto fileStore = gloo::rendezvous::FileStore("/tmp/gloo");
+        auto dev = gloo::transport::tcp::CreateDevice(getenv("DEVICE"));
+        context = std::make_shared<gloo::rendezvous::Context>(
+            atoi(getenv("KAITIAN_RANK")), atoi(getenv("KAITIAN_WORLD_SIZE")));
+        context->connectFullMesh(fileStore, dev);
+        std::cout
+            << "\033[1;92mKaitian connection established successfully.\033[0m"
+            << std::endl;
+    }
 }
 
 c10::intrusive_ptr<Work> ProcessGroupKaiTian::allgather(
@@ -92,27 +104,24 @@ c10::intrusive_ptr<Work> ProcessGroupKaiTian::broadcast(
 #ifdef KAITIAN_MLU
     work->cncl_work_ = cncl_process_group_->broadcast(tensors, opts);
     work->cncl_work_->wait();
-    work->future_->markCompleted(at::IValue(work->cncl_work_->result()));
     auto result = work->cncl_work_->result();
 #endif
 #ifdef KAITIAN_CUDA
     work->nccl_work_ = nccl_process_group_->broadcast(tensors, opts);
     work->nccl_work_->wait();
-    work->future_->markCompleted(work->nccl_work_->result());
     auto result = work->nccl_work_->result();
 #endif
     // NB: Temporarily not considering vector length
-    if (local_rank == 0) {
-        auto t = result[0].clone();
-        // kaitian_broadcast(t);
+    if (context) {
+        entry(context, result[0], GlooFunction::BROADCAST);
     }
 #ifdef KAITIAN_MLU
-    work->cncl_work_ = cncl_process_group_->barrier();
+    work->cncl_work_ = cncl_process_group_->broadcast(tensors, opts);
 #endif
 #ifdef KAITIAN_CUDA
-    work->nccl_work_ = nccl_process_group_->barrier();
+    work->nccl_work_ = nccl_process_group_->broadcast(tensors, opts);
 #endif
-
+    work->future_->markCompleted(result);
     return work;
 }
 
@@ -127,6 +136,5 @@ c10::intrusive_ptr<ProcessGroup> ProcessGroupKaiTian::createProcessGroupKaiTian(
 PYBIND11_MODULE(_C, m) {
     m.def("createProcessGroupKaiTian",
           &c10d::ProcessGroupKaiTian::createProcessGroupKaiTian);
-    m.def("gloo_init", &gloo_init);
     m.def("time_spend", &time_spend);
 }

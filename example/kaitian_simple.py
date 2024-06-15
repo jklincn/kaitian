@@ -66,7 +66,7 @@ def train(rank, world_size):
 
 
 if __name__ == "__main__":
-    world_size = torch_kaitian.device_count()
+    world_size = torch_kaitian.local_device_count()
     mp.spawn(
         train,
         args=(world_size,),

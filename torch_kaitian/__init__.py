@@ -17,7 +17,7 @@ def device():
 
 def set_device(rank):
     if rank == 0:
-        _C.gloo_init(device_type)
+        _C.gloo_init(device_type, rank)
 
     if device_type == "MLU":
         torch.mlu.set_device(rank)
@@ -29,11 +29,21 @@ def world_size():
     pass
 
 
-def device_count():
+def local_device_count():
     if device_type == "MLU":
         return torch.mlu.device_count()
     else:
         return torch.cuda.device_count()
+
+
+def global_device_count():
+    global_device_count_ = os.environ.get("KAITIAN_GLOBAL_DEVICE_COUNT", None)
+    if global_device_count_ is None:
+        raise EnvironmentError(
+            f"Environment variable KAITIAN_GLOBAL_DEVICE_COUNT is not set."
+        )
+    else:
+        return global_device_count_
 
 
 def manual_seed(seed):
@@ -43,3 +53,7 @@ def manual_seed(seed):
     else:
         torch.cuda.manual_seed(seed)
         torch.backends.cudnn.deterministic = True
+
+
+def time_spend():
+    _C.time_spend()

@@ -92,11 +92,12 @@ def run(rank, world_size):
             correct += (predicted == labels).sum().item()
     if rank == 0:
         print(f"Accuracy: {100 * correct / total:.2f}%", flush=True)
+        torch_kaitian.time_spend()
     dist.destroy_process_group()
 
 
 if __name__ == "__main__":
-    world_size = torch_kaitian.device_count()
+    world_size = torch_kaitian.local_device_count()
 
     # Download in advance to avoid duplicate downloads by multiple processes
     datasets.CIFAR10(root="./data", train=True, download=True)

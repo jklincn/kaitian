@@ -12,6 +12,7 @@ library_dirs = []
 libraries = []
 define_macros = []
 runtime_library_dirs = []
+extra_compile_args = []
 extra_link_args = ["/usr/local/lib/libgloo.a"]
 
 
@@ -42,6 +43,10 @@ def mlu_support():
 
 def cuda_support():
     cuda_home = os.getenv("CUDA_HOME", "/usr/local/cuda")
+    if not os.path.exists(cuda_home):
+        raise FileNotFoundError(
+            f"CUDAToolKit is not installed. Search path: {cuda_home}"
+        )
     include_dirs.extend(
         [
             # for '#include <nccl.h>', see kaitian/include/cuda/cuda.hpp
@@ -54,14 +59,14 @@ def cuda_support():
     define_macros.extend([("KAITIAN_CUDA", None), ("USE_C10D_NCCL", None)])
 
 
-DEVICE = os.environ.get("DEVICE", None)
-match DEVICE:
+device_type = os.environ.get("DEVICE", None)
+match device_type:
     case "MLU":
         mlu_support()
     case "CUDA":
         cuda_support()
     case _:
-        raise EnvironmentError(f"Environment variable DEVICE error: {DEVICE}.")
+        raise EnvironmentError(f"Environment variable DEVICE error: {device_type}.")
 
 
 module = cpp_extension.CppExtension(
@@ -72,7 +77,7 @@ module = cpp_extension.CppExtension(
     libraries=libraries,
     define_macros=define_macros,
     runtime_library_dirs=runtime_library_dirs,
-    # extra_compile_args=[],
+    extra_compile_args=extra_compile_args,
     extra_link_args=extra_link_args,
 )
 

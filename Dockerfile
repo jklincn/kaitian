@@ -12,8 +12,8 @@ RUN sed -i 's/archive.ubuntu.com/mirrors.ustc.edu.cn/g' /etc/apt/sources.list &&
     && rm -rf /var/lib/apt/lists/*
 
 # Install gloo
-COPY . /opt/kaitian
-RUN cd /opt/kaitian/gloo && \
+COPY ./gloo /opt/gloo
+RUN cd /opt/gloo && \
     mkdir build && \
     cd build && \
     cmake -DCMAKE_CXX_FLAGS="-D_GLIBCXX_USE_CXX11_ABI=0" .. && \
@@ -21,6 +21,7 @@ RUN cd /opt/kaitian/gloo && \
     make install
 
 # Install kaitian
+COPY . /opt/kaitian
 RUN cd /opt/kaitian && pip install .
 
 CMD ["tail", "-f", "/dev/null"]

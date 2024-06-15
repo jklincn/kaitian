@@ -3,8 +3,12 @@
 #include <ATen/core/TensorBody.h>
 #include <c10/core/Device.h>
 #include <pybind11/chrono.h>
+#include <torch/torch.h>
 
+#include "ATen/ops/randint.h"
+#include "gloo.hpp"
 #include "support.hpp"
+#include "torch/types.h"
 
 namespace c10d {
 WorkKaiTian::WorkKaiTian(at::Device device) : device_(device) {
@@ -61,6 +65,7 @@ c10::intrusive_ptr<Work> ProcessGroupKaiTian::allgather(
 
 c10::intrusive_ptr<Work> ProcessGroupKaiTian::allreduce(
     std::vector<at::Tensor>& tensors, const AllreduceOptions& opts) {
+    // std::cout << "allreduce: opt " << opts.reduceOp.op_ << std::endl;
     auto work = c10::make_intrusive<WorkKaiTian>(tensors[0].device());
     work->operation_ = OperationType::ALLREDUCE;
 #ifdef KAITIAN_MLU
@@ -73,6 +78,9 @@ c10::intrusive_ptr<Work> ProcessGroupKaiTian::allreduce(
     work->nccl_work_->wait();
     work->future_->markCompleted(work->nccl_work_->result());
 #endif
+    // NB: Temporarily not considering vector length
+    // c10d::BroadcastOptions broadcast_opts;
+    // broadcast_opts.rootRank = 0;
     return work;
 }
 
@@ -80,16 +88,31 @@ c10::intrusive_ptr<Work> ProcessGroupKaiTian::broadcast(
     std::vector<at::Tensor>& tensors, const BroadcastOptions& opts) {
     auto work = c10::make_intrusive<WorkKaiTian>(tensors[0].device());
     work->operation_ = OperationType::BROADCAST;
+    // std::cout << "broadcast: len: " << tensors.size() << std::endl;
 #ifdef KAITIAN_MLU
     work->cncl_work_ = cncl_process_group_->broadcast(tensors, opts);
     work->cncl_work_->wait();
     work->future_->markCompleted(at::IValue(work->cncl_work_->result()));
+    auto result = work->cncl_work_->result();
 #endif
 #ifdef KAITIAN_CUDA
     work->nccl_work_ = nccl_process_group_->broadcast(tensors, opts);
     work->nccl_work_->wait();
     work->future_->markCompleted(work->nccl_work_->result());
+    auto result = work->nccl_work_->result();
 #endif
+    // NB: Temporarily not considering vector length
+    if (local_rank == 0) {
+        auto t = result[0].clone();
+        // kaitian_broadcast(t);
+    }
+#ifdef KAITIAN_MLU
+    work->cncl_work_ = cncl_process_group_->barrier();
+#endif
+#ifdef KAITIAN_CUDA
+    work->nccl_work_ = nccl_process_group_->barrier();
+#endif
+
     return work;
 }
 
@@ -101,10 +124,9 @@ c10::intrusive_ptr<ProcessGroup> ProcessGroupKaiTian::createProcessGroupKaiTian(
 
 }  // namespace c10d
 
-extern void gloo_init(const std::string&);
-
 PYBIND11_MODULE(_C, m) {
     m.def("createProcessGroupKaiTian",
           &c10d::ProcessGroupKaiTian::createProcessGroupKaiTian);
     m.def("gloo_init", &gloo_init);
+    m.def("time_spend", &time_spend);
 }

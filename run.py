@@ -220,17 +220,19 @@ def run_container(device_type, file, rank, world_size):
     print(f"Running {device_type} container...")
     client = docker.from_env()
     command = f"python /{os.path.basename(file)}"
+    environment = {
+        "KAITIAN_GLOBAL_DEVICE_COUNT": total_nums,
+        "KAITIAN_RANK": rank,
+        "KAITIAN_WORLD_SIZE": world_size,
+    }
     match device_type:
         case "CUDA":
             return client.containers.run(
                 detach=True,
                 network="kaitian",
                 name=device_type,
-                environment={
-                    "TOTAL_NUMS": total_nums,
-                    "KAITIAN_RANK": rank,
-                    "KAITIAN_WORLD_SIZE": world_size,
-                },
+                hostname=device_type,
+                environment=environment,
                 device_requests=[
                     docker.types.DeviceRequest(
                         device_ids=["all"], capabilities=[["gpu"]]
@@ -255,11 +257,8 @@ def run_container(device_type, file, rank, world_size):
                 detach=True,
                 network="kaitian",
                 name=device_type,
-                environment={
-                    "TOTAL_NUMS": total_nums,
-                    "KAITIAN_RANK": rank,
-                    "KAITIAN_WORLD_SIZE": world_size,
-                },
+                hostname=device_type,
+                environment=environment,
                 devices=device,
                 shm_size="16G",
                 volumes=[
@@ -272,6 +271,7 @@ def run_container(device_type, file, rank, world_size):
                 command=command,
             )
 
+
 def stream_logs(container, device_type):
     logs = []
     for line in container.logs(stream=True, follow=True):
@@ -279,7 +279,7 @@ def stream_logs(container, device_type):
         print(f"[{device_type}] {line.decode().strip()}", flush=True)
     with open(f"log_{device_type}.txt", "w") as log_file:
         log_file.write("\n".join(logs))
-    
+
 
 def docker_run(file):
     global coordinator
@@ -321,17 +321,22 @@ def docker_run(file):
             thread.join()
         print("--------- Finish -----------")
         for device_type in device_types:
-            print(f"{device_type} log file path: {os.path.dirname(os.path.abspath(__file__))}/log_{device_type}.txt", flush=True)
+            print(
+                f"{device_type} log file path: {os.path.dirname(os.path.abspath(__file__))}/log_{device_type}.txt",
+                flush=True,
+            )
 
     except KeyboardInterrupt:
         print("Received KeyboardInterrupt. Stop and remove all containers.")
     finally:
         for device_type in device_types:
-            try:
-                node = client.containers.get(device_type)
-                node.remove(force=True)
-            except docker.errors.NotFound:
-                continue
+            while True:
+                try:
+                    node = client.containers.get(device_type)
+                    node.remove(force=True)
+                    break
+                except docker.errors.NotFound:
+                    continue
         network.remove()
         volume.remove()
 

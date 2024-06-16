@@ -50,7 +50,7 @@ Taking NVIDIA CUDA for distributed training as an example.
 | DistributedSampler(train_set, num_replicas=world_size, rank=rank) | global_world_size = torch_kaitian.global_world_size()<br />global_rank = torch_kaitian.global_rank() <br />DistributedSampler(train_set,num_replicas=global_world_size,rank=global_rank ) |
 | torch.manual_seed(seed)<br />torch.cuda.manual_seed(seed)<br />torch.backends.cudnn.deterministic = True | torch_kaitian.manual_seed(seed)                              |
 
-Specific adaptation examples can be found in [example/cuda.py](example/cuda. py) (original code) and [example/kaitian.py](example/kaitian. py) (modified code), with the following differences：
+Specific adaptation examples can be found in [example/cuda.py](example/cuda.py) (original code) and [example/kaitian.py](example/kaitian.py) (modified code), with the following differences：
 
 ```
 ~/kaitian/example$ diff cuda.py kaitian.py

@@ -1,32 +1,32 @@
 # KaiTian
 
-> English | [简体中文](README_CN.md)
+> [English](README.md) | 简体中文
 
-KaiTian is a Pytorch backend extension that enables distributed data parallel for heterogeneous devices.
+KaiTian（开天）是 PyTorch 的通信后端扩展，实现了异构加速卡的分布式训练。
 
-The name comes from the theme song of the 2018 LPL Spring Finals, which also conveys the meaning of "creating the world". See https://www.youtube.com/watch?v=mGAjqYyVvzc 。
+名字源于 2018 年 LPL 春季总决赛的主题曲，也为“开天辟地”之意，详见 https://www.bilibili.com/video/BV1jW411V78P 。
 
-> Currently, only single-node multi-GPU DDP is supported. Multi-node multi-GPU DDP and model parallelism have not yet been implemented.
+> 目前仅支持单机多卡 DDP，多机多卡 DDP 以及模型并行等暂未实现。
 
-## Installation
+## 安装
 
-### Prerequisites
+### 前提
 
-#### Basic Environment
+#### 基础环境
 
 - Python >= 3.8
-- [Docker Engine](https://docs.docker.com/engine/install/)（Recommended >= 26.0.2）
+- [Docker Engine](https://docs.docker.com/engine/install/)（推荐 >= 26.0.2）
 
-#### NVIDIA CUDA Support
+#### NVIDIA CUDA 支持
 
-- [NVIDIA Driver](https://www.nvidia.com/Download/Find.aspx)（Recommended >= 520.61.05）
-- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)（Recommended >= 1.15.0）
+- [NVIDIA Driver](https://www.nvidia.com/Download/Find.aspx)（推荐 >= 520.61.05）
+- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)（推荐 >= 1.15.0）
 
-#### Cambricon MLU Support
+#### Cambricon MLU 支持
 
-- [Cambricon MLU Driver](https://sdk.cambricon.com/download?component_name=Driver)（Recommended >= 5.10.22）
+- [Cambricon MLU Driver](https://sdk.cambricon.com/download?component_name=Driver)（推荐 >= 5.10.22）
 
-### Install KaiTian
+### 安装 KaiTian
 
 ```
 git clone --recurse-submodules https://github.com/jklincn/kaitian.git
@@ -34,13 +34,13 @@ cd kaitian
 pip install -r requirements.txt
 ```
 
-## Usage
+## 使用
 
-### Adapt to KaiTian
+### 适配 KaiTian 框架
 
-Taking NVIDIA CUDA for distributed training as an example.
+以使用 NVIDIA CUDA 进行分布式训练为例
 
-| Original code                                                | Modified code                                                |
+| 原始代码                                                     | 修改后代码                                                   |
 | ------------------------------------------------------------ | ------------------------------------------------------------ |
 |                                                              | import torch_kaitian                                         |
 | world_size = torch.cuda.device_count()                       | world_size = torch_kaitian.local_device_count()              |
@@ -50,7 +50,7 @@ Taking NVIDIA CUDA for distributed training as an example.
 | DistributedSampler(train_set, num_replicas=world_size, rank=rank) | global_world_size = torch_kaitian.global_world_size()<br />global_rank = torch_kaitian.global_rank() <br />DistributedSampler(train_set,num_replicas=global_world_size,rank=global_rank ) |
 | torch.manual_seed(seed)<br />torch.cuda.manual_seed(seed)<br />torch.backends.cudnn.deterministic = True | torch_kaitian.manual_seed(seed)                              |
 
-Specific adaptation examples can be found in [example/cuda.py](example/cuda. py) (original code) and [example/kaitian.py](example/kaitian. py) (modified code), with the following differences：
+具体适配示例可见 [example/cuda.py](example/cuda.py)（原始代码）以及 [example/kaitian.py](example/kaitian.py)（修改后代码），差异如下：
 
 ```
 ~/kaitian/example$ diff cuda.py kaitian.py
@@ -98,31 +98,30 @@ Specific adaptation examples can be found in [example/cuda.py](example/cuda. py)
 >     world_size = torch_kaitian.local_device_count()
 ```
 
-### Pull relevant images
+### 拉取相关镜像
 
 ```
 docker pull jklincn/kaitian:[tag]
 ```
 
-> For example, if you want to train using CUDA and MLU simultaneously, you need to pull the CUDA and MLU images.
+> 比如想使用 CUDA 和 MLU 同时训练，则需要拉取 CUDA 和 MLU 两个镜像。
 
-#### NVIDIA CUDA
+#### NVIDIA CUDA 
 
 - `0.0.0-cuda`
   - Python 3.10 + PyTorch 1.13.1 + CUDA 11.6 + cuDNN 8
-  - FROM pytorch/pytorch:1.13.1-cuda11.6-cudnn8-devel
+  - 基础镜像为 pytorch/pytorch:1.13.1-cuda11.6-cudnn8-devel
 
 #### Cambricon MLU
 
 - `0.0.0-mlu`
   - Python 3.10 + Pytorch 1.13.1 + Cambricon 1.17.0
-  - FROM yellow.hub.cambricon.com/pytorch/pytorch:v1.17.0-torch1.13.1-ubuntu20.04-py310
+  - 基础镜像为 yellow.hub.cambricon.com/pytorch/pytorch:v1.17.0-torch1.13.1-ubuntu20.04-py310
 
-### Run code using launcher
+### 使用启动器运行训练代码
 
 ```
 python run.py your_code.py
 ```
 
-By default, all available devices on the host will be used. Specific device can be disabled through `USE_XXX=0`. Currently, `USE_CUDA` and `USE_MLU` is supported.
-
+默认使用主机上所有可用的加速卡，可以通过 `USE_XXX=0` 禁用特定加速卡，目前支持 `USE_CUDA`、`USE_MLU`

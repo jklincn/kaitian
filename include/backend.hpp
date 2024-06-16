@@ -61,8 +61,6 @@ class ProcessGroupKaiTian : public ProcessGroup {
 #endif
 };
 
-typedef enum { ALLGATHER, ALLREDUCE, BROADCAST } OperationType;
-
 class WorkKaiTian : public Work {
     friend class ProcessGroupKaiTian;
 
@@ -76,7 +74,6 @@ class WorkKaiTian : public Work {
    private:
     c10::intrusive_ptr<at::ivalue::Future> future_;
     at::Device device_;
-    OperationType operation_;
 #ifdef KAITIAN_MLU
     c10::intrusive_ptr<Work> cncl_work_;
 #endif

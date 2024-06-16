@@ -225,53 +225,40 @@ def run_container(device_type, file, gloo_rank, gloo_world_size, global_rank_sta
         "KAITIAN_GLOO_RANK": gloo_rank,
         "KAITIAN_GLOO_WORLD_SIZE": gloo_world_size,
     }
+    volumes = [
+        "kaitian:/tmp/gloo",
+        f"{os.path.abspath(file)}:/{os.path.basename(file)}",
+        f"{os.path.dirname(os.path.abspath(file))}/data:/data",
+        f"/home/lin/.cache/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints",
+    ]
     match device_type:
         case "CUDA":
-            return client.containers.run(
-                detach=True,
-                network="kaitian",
-                name=device_type,
-                hostname=device_type,
-                environment=environment,
-                device_requests=[
-                    docker.types.DeviceRequest(
-                        device_ids=["all"], capabilities=[["gpu"]]
-                    )
-                ],
-                shm_size="16G",
-                volumes=[
-                    "kaitian:/tmp/gloo",
-                    f"{os.path.abspath(file)}:/{os.path.basename(file)}",
-                    f"{os.path.dirname(os.path.abspath(file))}/data:/data",
-                    f"/home/lin/.cache/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints",
-                ],
-                working_dir="/",
-                image=CUDA_IMAGE,
-                command=command,
-            )
+            device_requests = [
+                docker.types.DeviceRequest(device_ids=["all"], capabilities=[["gpu"]])
+            ]
+            devices = None
+            image = CUDA_IMAGE
         case "MLU":
+            device_requests = None
             # Compatible with MLU370
-            device = ["/dev/cambricon_ctl"]
+            devices = ["/dev/cambricon_ctl"]
             for i in range(device_counts["MLU"]):
-                device.extend([f"/dev/cambricon_dev{i}", f"/dev/cambricon_ipcm{i}"])
-            return client.containers.run(
-                detach=True,
-                network="kaitian",
-                name=device_type,
-                hostname=device_type,
-                environment=environment,
-                devices=device,
-                shm_size="16G",
-                volumes=[
-                    "kaitian:/tmp/gloo",
-                    f"{os.path.abspath(file)}:/{os.path.basename(file)}",
-                    f"{os.path.dirname(os.path.abspath(file))}/data:/data",
-                    f"/home/lin/.cache/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints",
-                ],
-                working_dir="/",
-                image=MLU_IMAGE,
-                command=command,
-            )
+                devices.extend([f"/dev/cambricon_dev{i}", f"/dev/cambricon_ipcm{i}"])
+            image = MLU_IMAGE
+    return client.containers.run(
+        detach=True,
+        network="kaitian",
+        name=device_type,
+        hostname=device_type,
+        environment=environment,
+        device_requests=device_requests,
+        devices=devices,
+        shm_size="16G",
+        volumes=volumes,
+        working_dir="/",
+        image=image,
+        command=command,
+    )
 
 
 def stream_logs(container, device_type):
@@ -317,12 +304,12 @@ def docker_run(file):
             global_rank_start += device_counts[device_type]
         # return
         print("--------- Output -----------")
-        threads = []
+        log_threads = []
         for device_type, container in containers.items():
             thread = threading.Thread(target=stream_logs, args=(container, device_type))
             thread.start()
-            threads.append(thread)
-        for thread in threads:
+            log_threads.append(thread)
+        for thread in log_threads:
             thread.join()
         print("--------- Finish -----------")
         for device_type in device_types:

@@ -1,63 +1,125 @@
 # KaiTian
 
-KaiTian（开天）是 Pytorch 的通信后端扩展，它统一了各种集体通信库，为不同厂商加速卡的分布式训练提供了可能
+KaiTian（开天）是 PyTorch 的通信后端扩展，实现了异构加速卡的分布式训练。
 
-名字源于2018年LPL春季总决赛的主题曲，详见 https://www.youtube.com/watch?v=mGAjqYyVvzc 。
+名字源于 2018 年 LPL 春季总决赛的主题曲，也为“开天辟地”之意，详见 https://www.bilibili.com/video/BV1jW411V78P 。
 
-## 硬件支持
-
-### Cambricon MLU
-
-#### 安装前提
-
-需要预先安装：
-
-- [Cambricon MLU Driver](https://sdk.cambricon.com/download?component_name=Driver)
-- [Cambricon Neuware SDK](https://sdk.cambricon.com/download?component_name=Neuware+SDK)
-- [Cambricon Pytorch](https://sdk.cambricon.com/download?component_name=PyTorch)
-
-Cambricon Pytorch 的源码安装过程（包括 Cambricon Neuware SDK 安装）可以参考 [jklincn/cambricon-pytorch](https://github.com/jklincn/cambricon-pytorch) 。
-
-#### 可配置环境变量
-
-- NEUWARE_HOME：指向 Neuware SDK 的安装目录。默认值为 `/usr/local/neuware` 。
+> 目前仅支持单机多卡 DDP，多机多卡 DDP 以及模型并行等暂未实现。
 
 ## 安装
 
-当前通过测试的 pytorch 版本：
+### 前提
 
-- [1.13.1](https://github.com/pytorch/pytorch/tree/v1.13.1)
+#### 基础环境
+
+- Python >= 3.8
+- [Docker Engine](https://docs.docker.com/engine/install/)（推荐 >= 26.0.2）
+
+#### 特定加速卡环境
+
+- NVIDIA GPU
+  - [NVIDIA Driver](https://www.nvidia.com/Download/Find.aspx)（推荐 >= 520.61.05）
+  - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)（推荐 >= 1.15.0）
+- Cambricon MLU
+  - [Cambricon MLU Driver](https://sdk.cambricon.com/download?component_name=Driver)（推荐 >= 5.10.22）
+
+### 安装 KaiTian
 
 ```
-python setup.py install
-```
-
-## 测试
-
-```
-# Only one linear layer and random data
-python test/example_simple.py
-
-# MobileNet_V2 and CIFAR10
-python test/example.py
+git clone --recurse-submodules https://github.com/jklincn/kaitian.git
+cd kaitian
+pip install -r requirements.txt
 ```
 
 ## 使用
 
-导入 kaitian 前需要导入 torch 包，即
+### 适配 KaiTian 框架
 
-```
-import torch
-# import torch_mlu  # 如果使用 Cambricon MLU, 请取消注释
-import torch_kaitian
-```
-
-以 cuda 和 nccl 为例
+以 GPU 分布式训练为例
 
 | 原始代码                                                     | 修改后代码                                                   |
 | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| world_size = torch.cuda.device_count()                       | world_size = torch_kaitian.init()                            |
-| backend = "nccl"<br />dist.init_process_group(backend, rank=rank, world_size=size) | backend = "kaitian"<br />dist.init_process_group(backend, rank=rank, world_size=size) |
+|                                                              | import torch_kaitian                                         |
+| world_size = torch.cuda.device_count()                       | world_size = torch_kaitian.local_device_count()              |
+| dist.init_process_group("nccl", rank=rank, world_size=world_size) | dist.init_process_group("kaitian", rank=rank, world_size=world_size) |
 | torch.cuda.set_device(rank)                                  | torch_kaitian.set_device(rank)                               |
-| device = "cuda"<br />model = model.to(device)                | device = torch_kaitian.device()<br />model = model.to(device) |
+| device = "cuda"                                              | device = torch_kaitian.device()                              |
+| DistributedSampler(train_set, num_replicas=world_size, rank=rank) | global_world_size = torch_kaitian.global_world_size()<br />global_rank = torch_kaitian.global_rank() <br />DistributedSampler(train_set,num_replicas=global_world_size,rank=global_rank ) |
+| torch.manual_seed(seed)<br />torch.cuda.manual_seed(seed)<br />torch.backends.cudnn.deterministic = True | torch_kaitian.manual_seed(seed)                              |
+
+具体适配示例可见 [example/cuda.py](example/cuda.py)（原始代码）以及 [example/kaitian.py](example/kaitian.py)（修改后代码），差异如下：
+
+```
+~/kaitian/example$ diff cuda.py kaitian.py
+14a15,16
+> import torch_kaitian
+> 
+18c20
+< device = "cuda"
+---
+> device = torch_kaitian.device()
+24,25c26,27
+<     dist.init_process_group("nccl", rank=rank, world_size=world_size)
+<     torch.cuda.set_device(rank)
+---
+>     dist.init_process_group("kaitian", rank=rank, world_size=world_size)
+>     torch_kaitian.set_device(rank)
+29,31c31
+<     torch.manual_seed(seed)
+<     torch.cuda.manual_seed(seed)
+<     torch.backends.cudnn.deterministic = True
+---
+>     torch_kaitian.manual_seed(seed)
+45d44
+< 
+47c46,50
+<     train_sampler = DistributedSampler(train_set)
+---
+>     train_sampler = DistributedSampler(
+>         train_set,
+>         num_replicas=torch_kaitian.global_world_size(),
+>         rank=torch_kaitian.global_rank(),
+>     )
+53c56,61
+<     test_sampler = DistributedSampler(test_set, shuffle=False)
+---
+>     test_sampler = DistributedSampler(
+>         test_set,
+>         num_replicas=torch_kaitian.global_world_size(),
+>         rank=torch_kaitian.global_rank(),
+>         shuffle=False,
+>     )
+97c105
+<     world_size = torch.cuda.device_count()
+---
+>     world_size = torch_kaitian.local_device_count()
+```
+
+### 拉取相关镜像
+
+```
+docker pull jklincn/kaitian:[tag]
+```
+
+> 比如想使用 GPU 和 MLU 同时训练，则需要拉取 GPU 和 MLU 两个镜像。
+
+#### 可用的 tag 
+
+##### NVIDIA GPU 
+
+- `0.0.0-cuda`
+  - Python 3.10 + PyTorch 1.13.1 + CUDA 11.6 + cuDNN 8
+  - 基础镜像为 pytorch/pytorch:1.13.1-cuda11.6-cudnn8-devel
+
+##### Cambricon MLU
+
+- `0.0.0-mlu`
+  - Python 3.10 + Pytorch 1.13.1 + Cambricon 1.17.0
+  - 基础镜像为 yellow.hub.cambricon.com/pytorch/pytorch:v1.17.0-torch1.13.1-ubuntu20.04-py310
+
+### 使用启动器运行训练代码
+
+```
+python run.py your_code.py
+```
 

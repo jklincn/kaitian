@@ -6,10 +6,11 @@ import torch.distributed as dist
 import torch.multiprocessing as mp
 import torch.nn as nn
 import torch.optim as optim
-import torchvision
 import torchvision.transforms as transforms
 from torch.nn.parallel import DistributedDataParallel as DDP
-from torchvision import models
+from torch.utils.data import DataLoader
+from torch.utils.data.distributed import DistributedSampler
+from torchvision import datasets, models
 
 num_epochs = 1
 lr = 0.001
@@ -42,23 +43,15 @@ def run(rank, world_size):
         ]
     )
 
-    train_set = torchvision.datasets.CIFAR10(
-        root="./data", train=True, transform=transform
-    )
-    train_sampler = torch.utils.data.distributed.DistributedSampler(
-        train_set, num_replicas=world_size, rank=rank
-    )
-    train_loader = torch.utils.data.DataLoader(
+    train_set = datasets.CIFAR10(root="./data", train=True, transform=transform)
+    train_sampler = DistributedSampler(train_set)
+    train_loader = DataLoader(
         train_set, batch_size=batch_size, sampler=train_sampler, num_workers=2
     )
 
-    test_set = torchvision.datasets.CIFAR10(
-        root="./data", train=False, transform=transform
-    )
-    test_sampler = torch.utils.data.distributed.DistributedSampler(
-        test_set, num_replicas=world_size, rank=rank, shuffle=False
-    )
-    test_loader = torch.utils.data.DataLoader(
+    test_set = datasets.CIFAR10(root="./data", train=False, transform=transform)
+    test_sampler = DistributedSampler(test_set, shuffle=False)
+    test_loader = DataLoader(
         test_set, batch_size=batch_size, sampler=test_sampler, num_workers=2
     )
 
@@ -97,7 +90,7 @@ def run(rank, world_size):
             correct += (predicted == labels).sum().item()
     if rank == 0:
         # Accuracy: 75.84%
-        print(f"Accuracy: {100 * correct / total:.2f}%", flush=True)
+        print(f"Rank {rank}, Accuracy: {100 * correct / total:.2f}%", flush=True)
     dist.destroy_process_group()
 
 
@@ -105,8 +98,8 @@ if __name__ == "__main__":
     world_size = torch.cuda.device_count()
 
     # Download in advance to avoid duplicate downloads by multiple processes
-    torchvision.datasets.CIFAR10(root="./data", train=True, download=True)
-    torchvision.datasets.CIFAR10(root="./data", train=False, download=True)
+    datasets.CIFAR10(root="./data", train=True, download=True)
+    datasets.CIFAR10(root="./data", train=False, download=True)
     models.mobilenet_v2(weights="MobileNet_V2_Weights.DEFAULT")
     start_time = time.time()
     mp.spawn(

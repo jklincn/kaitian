@@ -47,7 +47,6 @@ def run(rank, world_size):
         train_set,
         num_replicas=torch_kaitian.global_world_size(),
         rank=torch_kaitian.global_rank(),
-        drop_last=True,
     )
     train_loader = DataLoader(
         train_set, batch_size=batch_size, sampler=train_sampler, num_workers=2
@@ -59,7 +58,6 @@ def run(rank, world_size):
         num_replicas=torch_kaitian.global_world_size(),
         rank=torch_kaitian.global_rank(),
         shuffle=False,
-        drop_last=True,
     )
     test_loader = DataLoader(
         test_set, batch_size=batch_size, sampler=test_sampler, num_workers=2

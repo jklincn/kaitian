@@ -6,13 +6,24 @@ from . import _C
 
 device_type = os.environ.get("DEVICE", None)
 if device_type is None:
-    raise EnvironmentError("Required environment variable DEVICE not set.")
+    raise EnvironmentError(
+        "[KaiTian] [Internal Error] Required environment variable DEVICE not set."
+    )
 elif device_type == "MLU":
     import torch_mlu
 
 
 def device():
     return torch.device("privateuseone:0")
+
+
+def global_rank():
+    global_rank_ = os.environ.get("KAITIAN_GLOBAL_RANK_START", None)
+    if global_rank_ is None:
+        raise EnvironmentError(
+            "[KaiTian] [Internal Error] Required environment variable KAITIAN_GLOBAL_RANK_START not set."
+        )
+    return int(global_rank_) + dist.get_rank()
 
 
 def set_device(rank):
@@ -22,8 +33,13 @@ def set_device(rank):
         torch.cuda.set_device(rank)
 
 
-def world_size():
-    pass
+def global_world_size():
+    global_world_size_ = os.environ.get("KAITIAN_GLOBAL_WORLD_SIZE", None)
+    if global_world_size_ is None:
+        raise EnvironmentError(
+            "[KaiTian] [Internal Error] Required environment variable KAITIAN_GLOBAL_WORLD_SIZE not set."
+        )
+    return int(global_world_size_)
 
 
 def local_device_count():
@@ -31,16 +47,6 @@ def local_device_count():
         return torch.mlu.device_count()
     else:
         return torch.cuda.device_count()
-
-
-def global_device_count():
-    global_device_count_ = os.environ.get("KAITIAN_GLOBAL_DEVICE_COUNT", None)
-    if global_device_count_ is None:
-        raise EnvironmentError(
-            f"Environment variable KAITIAN_GLOBAL_DEVICE_COUNT is not set."
-        )
-    else:
-        return global_device_count_
 
 
 def manual_seed(seed):

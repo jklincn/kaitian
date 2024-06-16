@@ -12,8 +12,8 @@ import torch_kaitian
 
 input_size = 1
 output_size = 1
-num_epochs = 500
-num_samples = 100
+num_epochs = 100
+num_samples = 500
 device = torch_kaitian.device()
 
 

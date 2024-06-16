@@ -6,10 +6,9 @@ import subprocess
 import docker
 import threading
 
-cuda_nums = 0
-mlu_nums = 0
 total_nums = 0
 device_types = []
+device_counts = {}
 coordinator = ""
 
 USE_CUDA = True if os.environ.get("USE_CUDA", "1") == "1" else False
@@ -61,6 +60,7 @@ def find_cuda():
         )
         print(f"Memory: {gpu_info['memory_total']}")
         print("-----------------------------")
+    device_counts["CUDA"] = len(gpu_info_list)
     return len(gpu_info_list)
 
 
@@ -103,6 +103,7 @@ def find_mlu():
         )
         print(f"Memory: {info['CnmonInfo'][i]['PhysicalMemUsage']['Total']} MiB")
         print("-----------------------------")
+    device_counts["MLU"] = count
     return count
 
 
@@ -199,31 +200,30 @@ def check_mlu():
 
 
 def find_device():
-    global cuda_nums
-    global mlu_nums
     global total_nums
     print("-----------------------------")
     if USE_CUDA:
-        cuda_nums = find_cuda()
-        if cuda_nums > 0:
+        find_cuda()
+        if device_counts["CUDA"] > 0:
             check_cuda()
             print("-----------------------------")
     if USE_MLU:
-        mlu_nums = find_mlu()
-        if mlu_nums > 0:
+        find_mlu()
+        if device_counts["MLU"] > 0:
             check_mlu()
             print("-----------------------------")
-    total_nums = cuda_nums + mlu_nums
+    total_nums = device_counts["CUDA"] + device_counts["MLU"]
 
 
-def run_container(device_type, file, rank, world_size):
+def run_container(device_type, file, gloo_rank, gloo_world_size, global_rank_start):
     print(f"Running {device_type} container...")
     client = docker.from_env()
     command = f"python /{os.path.basename(file)}"
     environment = {
-        "KAITIAN_GLOBAL_DEVICE_COUNT": total_nums,
-        "KAITIAN_RANK": rank,
-        "KAITIAN_WORLD_SIZE": world_size,
+        "KAITIAN_GLOBAL_RANK_START": global_rank_start,
+        "KAITIAN_GLOBAL_WORLD_SIZE": total_nums,
+        "KAITIAN_GLOO_RANK": gloo_rank,
+        "KAITIAN_GLOO_WORLD_SIZE": gloo_world_size,
     }
     match device_type:
         case "CUDA":
@@ -243,6 +243,7 @@ def run_container(device_type, file, rank, world_size):
                     "kaitian:/tmp/gloo",
                     f"{os.path.abspath(file)}:/{os.path.basename(file)}",
                     f"{os.path.dirname(os.path.abspath(file))}/data:/data",
+                    f"/home/lin/.cache/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints",
                 ],
                 working_dir="/",
                 image=CUDA_IMAGE,
@@ -251,7 +252,7 @@ def run_container(device_type, file, rank, world_size):
         case "MLU":
             # Compatible with MLU370
             device = ["/dev/cambricon_ctl"]
-            for i in range(mlu_nums):
+            for i in range(device_counts["MLU"]):
                 device.extend([f"/dev/cambricon_dev{i}", f"/dev/cambricon_ipcm{i}"])
             return client.containers.run(
                 detach=True,
@@ -265,6 +266,7 @@ def run_container(device_type, file, rank, world_size):
                     "kaitian:/tmp/gloo",
                     f"{os.path.abspath(file)}:/{os.path.basename(file)}",
                     f"{os.path.dirname(os.path.abspath(file))}/data:/data",
+                    f"/home/lin/.cache/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints",
                 ],
                 working_dir="/",
                 image=MLU_IMAGE,
@@ -306,11 +308,14 @@ def docker_run(file):
         )
     try:
         coordinator = device_types[0]
+        global_rank_start = 0
         # create container
-        for rank, device_type in enumerate(device_types):
+        for gloo_rank, device_type in enumerate(device_types):
             containers[device_type] = run_container(
-                device_type, file, rank, len(device_types)
+                device_type, file, gloo_rank, len(device_types), global_rank_start
             )
+            global_rank_start += device_counts[device_type]
+        # return
         print("--------- Output -----------")
         threads = []
         for device_type, container in containers.items():
@@ -329,7 +334,9 @@ def docker_run(file):
     except KeyboardInterrupt:
         print("Received KeyboardInterrupt. Stop and remove all containers.")
     finally:
-        for device_type in device_types:
+        # return
+        # 'reversed' ensures that the coordinator is the last to stop
+        for device_type in reversed(device_types):
             while True:
                 try:
                     node = client.containers.get(device_type)

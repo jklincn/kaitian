@@ -1,6 +1,7 @@
 #pragma once
 #include <gloo/algorithm.h>
 #include <gloo/allgather.h>
+#include <gloo/allgather_ring.h>
 #include <gloo/allgatherv.h>
 #include <gloo/allreduce.h>
 #include <gloo/allreduce_ring.h>
@@ -22,27 +23,36 @@
 #include <gloo/transport/tcp/device.h>
 #include <torch/torch.h>
 
-enum GlooFunction { BROADCAST, ALLREDUCE, ALLGATHER };
+#include <stdexcept>
 
-void _callFunction(const std::string &func_name,
-                   const std::function<void()> &func);
+enum GlooFunction { BROADCAST, ALLREDUCE };
+
+void gloo_entry(const std::shared_ptr<gloo::rendezvous::Context> &context,
+                torch::Tensor &tensor, GlooFunction op);
+void time_spend();
 
 template <typename T>
-void runBroadcast(const std::shared_ptr<gloo::rendezvous::Context> &context,
-                  torch::Tensor &tensor) {
-    static_assert(std::is_same<T, float>::value ||
-                      std::is_same<T, int64_t>::value ||
-                      std::is_same<T, int32_t>::value,
-                  "Unsupported tensor type for gloo broadcast");
-
-    gloo::BroadcastOneToAll<T> algorithm(
-        context, {reinterpret_cast<T *>(tensor.data_ptr())}, tensor.numel(), 0,
-        0);
-
-    algorithm.run();
+void _entry(const std::shared_ptr<gloo::rendezvous::Context> &context,
+            torch::Tensor &tensor, GlooFunction op) {
+    std::unique_ptr<gloo::Algorithm> algorithm;
+    switch (op) {
+        case BROADCAST:
+            algorithm = std::make_unique<gloo::BroadcastOneToAll<T>>(
+                context,
+                std::vector<T *>{reinterpret_cast<T *>(tensor.data_ptr())},
+                tensor.numel(), 0, 0);
+            break;
+        case ALLREDUCE:
+            algorithm = std::make_unique<gloo::AllreduceRing<T>>(
+                context,
+                std::vector<T *>{reinterpret_cast<T *>(tensor.data_ptr())},
+                tensor.numel());
+            break;
+    }
+    if (algorithm) {
+        algorithm->run();
+    } else {
+        throw std::runtime_error(
+            "[KaiTian] Internal Error: gloo algorithm is nullptr.");
+    }
 }
-
-void entry(const std::shared_ptr<gloo::rendezvous::Context> &context,
-           torch::Tensor &tensor, GlooFunction op);
-
-void time_spend();

@@ -52,6 +52,7 @@ class ProcessGroupKaiTian : public ProcessGroup {
    private:
     c10::intrusive_ptr<Store> store_;
     std::shared_ptr<gloo::rendezvous::Context> context;
+    int kaitian_gloo_world_size;
 #ifdef KAITIAN_MLU
     c10::intrusive_ptr<ProcessGroup> cncl_process_group_;
 #endif

@@ -7,7 +7,6 @@
 
 #include <cstdlib>
 
-#include "ATen/ops/randint.h"
 #include "gloo.hpp"
 #include "support.hpp"
 #include "torch/types.h"
@@ -46,82 +45,103 @@ ProcessGroupKaiTian::ProcessGroupKaiTian(
     if (rank == 0) {
         auto fileStore = gloo::rendezvous::FileStore("/tmp/gloo");
         auto dev = gloo::transport::tcp::CreateDevice(getenv("DEVICE"));
+        kaitian_gloo_world_size = atoi(getenv("KAITIAN_GLOO_WORLD_SIZE"));
         context = std::make_shared<gloo::rendezvous::Context>(
-            atoi(getenv("KAITIAN_RANK")), atoi(getenv("KAITIAN_WORLD_SIZE")));
+            atoi(getenv("KAITIAN_GLOO_RANK")), kaitian_gloo_world_size);
         context->connectFullMesh(fileStore, dev);
         std::cout
             << "\033[1;92mKaitian connection established successfully.\033[0m"
             << std::endl;
     }
 }
-
+// NB: allgather only used by verify_params_across_processes(), so temporarily
+// skip it.
 c10::intrusive_ptr<Work> ProcessGroupKaiTian::allgather(
     std::vector<std::vector<at::Tensor>>& outputTensors,
     std::vector<at::Tensor>& inputTensors, const AllgatherOptions& opts) {
     auto work = c10::make_intrusive<WorkKaiTian>(outputTensors[0][0].device());
-    work->operation_ = OperationType::ALLGATHER;
 #ifdef KAITIAN_MLU
     work->cncl_work_ =
         cncl_process_group_->allgather(outputTensors, inputTensors, opts);
     work->cncl_work_->wait();
-    work->future_->markCompleted(work->cncl_work_->result());
+    auto result = work->cncl_work_->result();
 #endif
 #ifdef KAITIAN_CUDA
     work->nccl_work_ =
         nccl_process_group_->allgather(outputTensors, inputTensors, opts);
     work->nccl_work_->wait();
-    work->future_->markCompleted(work->nccl_work_->result());
+    auto result = work->nccl_work_->result();
 #endif
+    if (context) {
+    }
+    work->future_->markCompleted(result);
     return work;
 }
 
 c10::intrusive_ptr<Work> ProcessGroupKaiTian::allreduce(
     std::vector<at::Tensor>& tensors, const AllreduceOptions& opts) {
-    // std::cout << "allreduce: opt " << opts.reduceOp.op_ << std::endl;
     auto work = c10::make_intrusive<WorkKaiTian>(tensors[0].device());
-    work->operation_ = OperationType::ALLREDUCE;
 #ifdef KAITIAN_MLU
     work->cncl_work_ = cncl_process_group_->allreduce(tensors, opts);
     work->cncl_work_->wait();
-    work->future_->markCompleted(at::IValue(work->cncl_work_->result()));
 #endif
 #ifdef KAITIAN_CUDA
     work->nccl_work_ = nccl_process_group_->allreduce(tensors, opts);
     work->nccl_work_->wait();
-    work->future_->markCompleted(work->nccl_work_->result());
 #endif
-    // NB: Temporarily not considering vector length
-    // c10d::BroadcastOptions broadcast_opts;
-    // broadcast_opts.rootRank = 0;
-    return work;
-}
+    if (context) {
+        // NB: Temporarily not considering vector length.
+        gloo_entry(context, tensors[0], GlooFunction::ALLREDUCE);
 
-c10::intrusive_ptr<Work> ProcessGroupKaiTian::broadcast(
-    std::vector<at::Tensor>& tensors, const BroadcastOptions& opts) {
-    auto work = c10::make_intrusive<WorkKaiTian>(tensors[0].device());
-    work->operation_ = OperationType::BROADCAST;
-    // std::cout << "broadcast: len: " << tensors.size() << std::endl;
+        // Here we do division in advance because the world_size in pytorch is
+        // incorrect. And then pytorch will do division again.
+        if (tensors[0].scalar_type() == c10::ScalarType::Int ||
+            tensors[0].scalar_type() == c10::ScalarType::Long) {
+            auto t = tensors[0].to(torch::kFloat32);
+            t.div_(kaitian_gloo_world_size);
+            tensors[0].copy_(t.round().to(tensors[0].scalar_type()));
+        } else {
+            tensors[0].div_(kaitian_gloo_world_size);
+        }
+    }
 #ifdef KAITIAN_MLU
-    work->cncl_work_ = cncl_process_group_->broadcast(tensors, opts);
+    work->cncl_work_ = cncl_process_group_->broadcast(tensors);
     work->cncl_work_->wait();
     auto result = work->cncl_work_->result();
 #endif
 #ifdef KAITIAN_CUDA
-    work->nccl_work_ = nccl_process_group_->broadcast(tensors, opts);
+    work->nccl_work_ = nccl_process_group_->broadcast(tensors);
     work->nccl_work_->wait();
     auto result = work->nccl_work_->result();
 #endif
-    // NB: Temporarily not considering vector length
-    if (context) {
-        entry(context, result[0], GlooFunction::BROADCAST);
-    }
+    work->future_->markCompleted(result);
+    return work;
+}
+
+// NB: Currently broadcast don't use future.
+c10::intrusive_ptr<Work> ProcessGroupKaiTian::broadcast(
+    std::vector<at::Tensor>& tensors, const BroadcastOptions& opts) {
+    auto work = c10::make_intrusive<WorkKaiTian>(tensors[0].device());
 #ifdef KAITIAN_MLU
     work->cncl_work_ = cncl_process_group_->broadcast(tensors, opts);
+    work->cncl_work_->wait();
 #endif
 #ifdef KAITIAN_CUDA
     work->nccl_work_ = nccl_process_group_->broadcast(tensors, opts);
+    work->nccl_work_->wait();
 #endif
-    work->future_->markCompleted(result);
+    if (context) {
+        // NB: Temporarily not considering vector length.
+        gloo_entry(context, tensors[0], GlooFunction::BROADCAST);
+    }
+#ifdef KAITIAN_MLU
+    work->cncl_work_ = cncl_process_group_->broadcast(tensors);
+    work->cncl_work_->wait();
+#endif
+#ifdef KAITIAN_CUDA
+    work->nccl_work_ = nccl_process_group_->broadcast(tensors);
+    work->nccl_work_->wait();
+#endif
     return work;
 }
 

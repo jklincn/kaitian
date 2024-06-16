@@ -42,16 +42,24 @@ def run(rank, world_size):
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
     )
-
     train_set = datasets.CIFAR10(root="./data", train=True, transform=transform)
-    train_sampler = DistributedSampler(train_set, num_replicas=world_size, rank=rank)
+    train_sampler = DistributedSampler(
+        train_set,
+        num_replicas=torch_kaitian.global_world_size(),
+        rank=torch_kaitian.global_rank(),
+        drop_last=True,
+    )
     train_loader = DataLoader(
         train_set, batch_size=batch_size, sampler=train_sampler, num_workers=2
     )
 
     test_set = datasets.CIFAR10(root="./data", train=False, transform=transform)
     test_sampler = DistributedSampler(
-        test_set, num_replicas=world_size, rank=rank, shuffle=False
+        test_set,
+        num_replicas=torch_kaitian.global_world_size(),
+        rank=torch_kaitian.global_rank(),
+        shuffle=False,
+        drop_last=True,
     )
     test_loader = DataLoader(
         test_set, batch_size=batch_size, sampler=test_sampler, num_workers=2
@@ -91,7 +99,7 @@ def run(rank, world_size):
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
     if rank == 0:
-        print(f"Accuracy: {100 * correct / total:.2f}%", flush=True)
+        print(f"Rank {rank}, Accuracy: {100 * correct / total:.2f}%", flush=True)
         torch_kaitian.time_spend()
     dist.destroy_process_group()
 

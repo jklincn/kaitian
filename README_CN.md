@@ -31,7 +31,8 @@ KaiTian（开天）是 PyTorch 的通信后端扩展，实现了异构加速卡�
 ```
 git clone --recurse-submodules https://github.com/jklincn/kaitian.git
 cd kaitian
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+python -m pip install .
 ```
 
 ## 使用
@@ -121,7 +122,7 @@ docker pull jklincn/kaitian:[tag]
 ### 使用启动器运行训练代码
 
 ```
-python run.py your_code.py
+kaitian run your_code.py
 ```
 
 默认使用主机上所有可用的加速卡，可以通过 `USE_XXX=0` 禁用特定加速卡，目前支持 `USE_CUDA`、`USE_MLU`

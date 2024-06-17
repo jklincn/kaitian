@@ -59,27 +59,41 @@ def cuda_support():
     define_macros.extend([("KAITIAN_CUDA", None), ("USE_C10D_NCCL", None)])
 
 
-device_type = os.environ.get("DEVICE", None)
-match device_type:
-    case "MLU":
-        mlu_support()
-    case "CUDA":
-        cuda_support()
-    case _:
-        raise EnvironmentError(f"Environment variable DEVICE error: {device_type}.")
+def setup_extension():
+    device_type = os.environ.get("DEVICE")
+
+    if device_type:
+        match device_type:
+            case "MLU":
+                mlu_support()
+            case "CUDA":
+                cuda_support()
+            case _:
+                raise EnvironmentError(f"Unsupported DEVICE type: {device_type}")
+        ext_modules = [
+            cpp_extension.CppExtension(
+                name="torch_kaitian._C",
+                sources=sources,
+                include_dirs=include_dirs,
+                library_dirs=library_dirs,
+                libraries=libraries,
+                define_macros=define_macros,
+                runtime_library_dirs=runtime_library_dirs,
+                extra_compile_args=extra_compile_args,
+                extra_link_args=extra_link_args,
+            )
+        ]
+        cmdclass = {"build_ext": cpp_extension.BuildExtension}
+        entry_points = {}
+    else:
+        ext_modules = []
+        cmdclass = {}
+        entry_points = {"console_scripts": ["kaitian=torch_kaitian.cli:main"]}
+
+    return ext_modules, cmdclass, entry_points
 
 
-module = cpp_extension.CppExtension(
-    name="torch_kaitian._C",
-    sources=sources,
-    include_dirs=include_dirs,
-    library_dirs=library_dirs,
-    libraries=libraries,
-    define_macros=define_macros,
-    runtime_library_dirs=runtime_library_dirs,
-    extra_compile_args=extra_compile_args,
-    extra_link_args=extra_link_args,
-)
+ext_modules, cmdclass, entry_points = setup_extension()
 
 setup(
     name="torch_kaitian",
@@ -90,6 +104,7 @@ setup(
     author="jklincn",
     author_email="jklincn@outlook.com",
     packages=find_packages(),
-    ext_modules=[module],
-    cmdclass={"build_ext": cpp_extension.BuildExtension},
+    ext_modules=ext_modules,
+    cmdclass=cmdclass,
+    entry_points=entry_points,
 )

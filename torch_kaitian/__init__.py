@@ -2,15 +2,14 @@ import os
 import torch
 import torch.distributed as dist
 
-from . import _C
-
 device_type = os.environ.get("DEVICE", None)
-if device_type is None:
-    raise EnvironmentError(
-        "[KaiTian] [Internal Error] Required environment variable DEVICE not set."
-    )
-elif device_type == "MLU":
-    import torch_mlu
+if device_type:
+    from . import _C
+
+    if device_type == "MLU":
+        import torch_mlu
+    elif device_type == "CUDA":
+        pass
 
 
 def device():

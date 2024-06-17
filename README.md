@@ -31,7 +31,8 @@ The name comes from the theme song of the 2018 LPL Spring Finals, which also con
 ```
 git clone --recurse-submodules https://github.com/jklincn/kaitian.git
 cd kaitian
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
+python -m pip install .
 ```
 
 ## Usage
@@ -121,7 +122,7 @@ docker pull jklincn/kaitian:[tag]
 ### Run code using launcher
 
 ```
-python run.py your_code.py
+kaitian run your_code.py
 ```
 
 By default, all available devices on the host will be used. Specific device can be disabled through `USE_XXX=0`. Currently, `USE_CUDA` and `USE_MLU` is supported.

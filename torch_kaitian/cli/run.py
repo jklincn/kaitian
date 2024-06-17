@@ -1,4 +1,3 @@
-import argparse
 import json
 import os
 import shutil
@@ -107,32 +106,52 @@ def find_mlu():
     return count
 
 
-def check_cuda():
+def check_image(device_type):
+    match device_type:
+        case "CUDA":
+            base_image = CUDA_BASE_IMAGE
+            image = CUDA_IMAGE
+        case "MLU":
+            base_image = MLU_BASE_IMAGE
+            image = MLU_IMAGE
+        case _:
+            raise RuntimeError(
+                f"[KaiTian][Error] Internal error: unmatched device_type {device_type}."
+            )
     client = docker.from_env()
     try:
-        client.images.get(CUDA_BASE_IMAGE)
+        client.images.get(base_image)
     except docker.errors.ImageNotFound:
-        print(f"Image {CUDA_BASE_IMAGE} does not exist.")
-        print(f"You must `docker pull {CUDA_BASE_IMAGE}` first.")
+        print(f"Image {base_image} does not exist.")
+        match device_type:
+            case "CUDA":
+                print(f"You must `docker pull {base_image}` first.")
+            case "MLU":
+                print(
+                    f"You must get {base_image} first. See https://sdk.cambricon.com/download?component_name=PyTorch"
+                )
         exit()
+
     try:
-        client.images.get(CUDA_IMAGE)
+        client.images.get(image)
     except docker.errors.ImageNotFound:
-        print(f"Image {CUDA_IMAGE} does not exist.")
-        print(f"Building {CUDA_IMAGE}...")
+        print(f"Image {image} does not exist.")
+        print(f"Building {image}...")
+        # print(os.getcwd())
         build_command = [
             "docker",
             "build",
             "-t",
-            CUDA_IMAGE,
+            image,
             "--build-arg",
-            f"IMAGE={CUDA_BASE_IMAGE}",
+            f"IMAGE={base_image}",
             "--build-arg",
-            "DEVICE=CUDA",
-            os.path.dirname(os.path.abspath(__file__)),
+            f"DEVICE={device_type}",
+            ".",
         ]
         process = subprocess.Popen(
             build_command,
+            cwd=os.getcwd(),
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -143,60 +162,13 @@ def check_cuda():
             if output == "" and process.poll() is not None:
                 exit_code = process.poll()
                 if exit_code != 0:
-                    exit("image build error: ", exit_code)
+                    exit(f"Image build error: {exit_code}")
                 break
             if output:
                 print(output.strip(), flush=True)
 
-    print(f"Use CUDA Image: {CUDA_IMAGE}")
-    device_types.append("CUDA")
-
-
-def check_mlu():
-    client = docker.from_env()
-    try:
-        client.images.get(MLU_BASE_IMAGE)
-    except docker.errors.ImageNotFound:
-        print(f"Image {MLU_BASE_IMAGE} does not exist.")
-        print(
-            f"You must get {MLU_BASE_IMAGE} first. See https://sdk.cambricon.com/download?component_name=PyTorch"
-        )
-        exit()
-    try:
-        client.images.get(MLU_IMAGE)
-    except docker.errors.ImageNotFound:
-        print(f"Image {MLU_IMAGE} does not exist.")
-        print(f"Building {MLU_IMAGE}...")
-        build_command = [
-            "docker",
-            "build",
-            "-t",
-            MLU_IMAGE,
-            "--build-arg",
-            f"IMAGE={MLU_BASE_IMAGE}",
-            "--build-arg",
-            "DEVICE=MLU",
-            os.path.dirname(os.path.abspath(__file__)),
-        ]
-        process = subprocess.Popen(
-            build_command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-
-        while True:
-            output = process.stdout.readline()
-            if output == "" and process.poll() is not None:
-                exit_code = process.poll()
-                if exit_code != 0:
-                    exit("image build error: ", exit_code)
-                break
-            if output:
-                print(output.strip(), flush=True)
-
-    print(f"Use MLU Image: {MLU_IMAGE}")
-    device_types.append("MLU")
+    print(f"Use {device_type} Image: {image}")
+    device_types.append(device_type)
 
 
 def find_device():
@@ -205,14 +177,15 @@ def find_device():
     if USE_CUDA:
         find_cuda()
         if device_counts["CUDA"] > 0:
-            check_cuda()
+            check_image("CUDA")
             print("-----------------------------")
     if USE_MLU:
         find_mlu()
         if device_counts["MLU"] > 0:
-            check_mlu()
+            check_image("MLU")
             print("-----------------------------")
-    total_nums = device_counts["CUDA"] + device_counts["MLU"]
+    for device_type in device_types:
+        total_nums += device_counts[device_type]
 
 
 def run_container(device_type, file, gloo_rank, gloo_world_size, global_rank_start):
@@ -231,6 +204,7 @@ def run_container(device_type, file, gloo_rank, gloo_world_size, global_rank_sta
         f"{os.path.dirname(os.path.abspath(file))}/data:/data",
         f"/home/lin/.cache/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints",
     ]
+
     match device_type:
         case "CUDA":
             device_requests = [
@@ -245,6 +219,7 @@ def run_container(device_type, file, gloo_rank, gloo_world_size, global_rank_sta
             for i in range(device_counts["MLU"]):
                 devices.extend([f"/dev/cambricon_dev{i}", f"/dev/cambricon_ipcm{i}"])
             image = MLU_IMAGE
+
     return client.containers.run(
         detach=True,
         network="kaitian",
@@ -319,42 +294,21 @@ def docker_run(file):
             )
 
     except KeyboardInterrupt:
-        print("Received KeyboardInterrupt. Stop and remove all containers.")
+        print("Received KeyboardInterrupt. Stop and remove all containers.", flush=True)
     finally:
         # return
-        # 'reversed' ensures that the coordinator is the last to stop
-        for device_type in reversed(device_types):
-            while True:
-                try:
-                    node = client.containers.get(device_type)
-                    node.remove(force=True)
-                    break
-                except docker.errors.NotFound:
-                    continue
+        all_containers = client.containers.list(all=True)
+        for container in all_containers:
+            container_name = container.attrs["Name"].strip("/")
+            if container_name in device_types:
+                container.remove(force=True)
         network.remove()
         volume.remove()
 
 
-def get_args():
-    parser = argparse.ArgumentParser(description="KaiTian Launcher")
-    parser.add_argument(
-        "FILE", help="Your training code, for example: python run.py train.py"
-    )
-    parser.add_argument(
-        "-q",
-        "--quiet",
-        action="store_true",
-        help="enable quiet mode, less output is printed",
-    )
-    args = parser.parse_args()
-
-    if os.path.exists(args.FILE):
-        return args.FILE
-    else:
-        raise FileNotFoundError(f"{args.FILE} not found.")
-
-
-if __name__ == "__main__":
-    file = get_args()
+def run_kaitian(args):
+    file = args.FILE
+    if not os.path.exists(file):
+        raise FileNotFoundError(f"{file} not found.")
     find_device()
     docker_run(file)

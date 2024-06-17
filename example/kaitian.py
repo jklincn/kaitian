@@ -1,3 +1,4 @@
+import argparse
 import os
 import time
 
@@ -14,10 +15,30 @@ from torchvision import datasets, models
 
 import torch_kaitian
 
-num_epochs = 1
-lr = 0.001
-batch_size = 64
+# Setting default values
+default_num_epochs = 1
+default_lr = 0.001
+default_batch_size = 64
 device = torch_kaitian.device()
+
+# Argument parser setup
+parser = argparse.ArgumentParser(description="Distributed training script")
+parser.add_argument(
+    "--num_epochs",
+    type=int,
+    default=default_num_epochs,
+    help="number of epochs to train",
+)
+parser.add_argument("--lr", type=float, default=default_lr, help="learning rate")
+parser.add_argument(
+    "--batch_size", type=int, default=default_batch_size, help="batch size"
+)
+args = parser.parse_args()
+
+# Use values from argparse or default
+num_epochs = args.num_epochs
+lr = args.lr
+batch_size = args.batch_size
 
 
 def setup(rank, world_size):

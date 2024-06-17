@@ -224,7 +224,7 @@ def find_device(config_data):
     #     total_nums += device_counts[device_type]
 
 
-def init_kaitian(args):
+def init_kaitian(args, unknown_args):
 
     # 定义配置文件路径
     config_dir = os.path.join(os.path.expanduser("~"), ".config", "kaitian")

@@ -9,9 +9,10 @@ total_nums = 0
 device_types = []
 device_counts = {}
 coordinator = ""
+global_rank_start = 0
 
-USE_CUDA = True if os.environ.get("USE_CUDA", "1") == "1" else False
-USE_MLU = True if os.environ.get("USE_MLU", "1") == "1" else False
+USE_CUDA = os.environ.get("USE_CUDA", "all")
+USE_MLU = os.environ.get("USE_MLU", "all")
 
 CUDA_BASE_IMAGE = "pytorch/pytorch:1.13.1-cuda11.6-cudnn8-devel"
 CUDA_IMAGE = "jklincn/kaitian:0.0.0-cuda"
@@ -137,7 +138,6 @@ def check_image(device_type):
     except docker.errors.ImageNotFound:
         print(f"Image {image} does not exist.")
         print(f"Building {image}...")
-        # print(os.getcwd())
         build_command = [
             "docker",
             "build",
@@ -171,27 +171,25 @@ def check_image(device_type):
     device_types.append(device_type)
 
 
-def find_device():
-    global total_nums
+def find_devices():
     print("-----------------------------")
-    if USE_CUDA:
+    if USE_CUDA != "-1":
         find_cuda()
         if device_counts["CUDA"] > 0:
             check_image("CUDA")
             print("-----------------------------")
-    if USE_MLU:
+    if USE_MLU != "-1":
         find_mlu()
         if device_counts["MLU"] > 0:
             check_image("MLU")
             print("-----------------------------")
-    for device_type in device_types:
-        total_nums += device_counts[device_type]
 
 
-def run_container(device_type, file, gloo_rank, gloo_world_size, global_rank_start):
+def run_container(device_type, file, gloo_rank, gloo_world_size, unknown_args):
+    global global_rank_start
     print(f"Running {device_type} container...")
     client = docker.from_env()
-    command = f"python /{os.path.basename(file)}"
+    command = ["python", f"/{os.path.basename(file)}"] + unknown_args
     environment = {
         "KAITIAN_GLOBAL_RANK_START": global_rank_start,
         "KAITIAN_GLOBAL_WORLD_SIZE": total_nums,
@@ -204,22 +202,48 @@ def run_container(device_type, file, gloo_rank, gloo_world_size, global_rank_sta
         f"{os.path.dirname(os.path.abspath(file))}/data:/data",
         f"/home/lin/.cache/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints",
     ]
-
     match device_type:
         case "CUDA":
-            device_requests = [
-                docker.types.DeviceRequest(device_ids=["all"], capabilities=[["gpu"]])
-            ]
+            try:
+                if USE_CUDA == "all":
+                    device_requests = [
+                        docker.types.DeviceRequest(capabilities=[["gpu"]])
+                    ]
+                    global_rank_start += device_counts["CUDA"]
+                else:
+                    devices_ids = [
+                        str(gpu_id) for gpu_id in map(int, USE_CUDA.split(","))
+                    ]
+                    device_requests = [
+                        docker.types.DeviceRequest(
+                            device_ids=devices_ids, capabilities=[["gpu"]]
+                        )
+                    ]
+                    global_rank_start += len(devices_ids)
+            except ValueError:
+                exit(f"[KaiTian][Error] The provided USE_CUDA is invalid: {USE_CUDA}")
             devices = None
             image = CUDA_IMAGE
         case "MLU":
             device_requests = None
             # Compatible with MLU370
             devices = ["/dev/cambricon_ctl"]
-            for i in range(device_counts["MLU"]):
-                devices.extend([f"/dev/cambricon_dev{i}", f"/dev/cambricon_ipcm{i}"])
+            try:
+                if USE_MLU == "all":
+                    for i in range(device_counts["MLU"]):
+                        devices.extend(
+                            [f"/dev/cambricon_dev{i}", f"/dev/cambricon_ipcm{i}"]
+                        )
+                else:
+                    devices_ids = list(map(int, USE_MLU.split(",")))
+                    for i in range(device_counts["MLU"]):
+                        if i in devices_ids:
+                            devices.extend(
+                                [f"/dev/cambricon_dev{i}", f"/dev/cambricon_ipcm{i}"]
+                            )
+            except ValueError:
+                exit(f"[KaiTian][Error] The provided USE_MLU is invalid: {USE_MLU}")
             image = MLU_IMAGE
-
     return client.containers.run(
         detach=True,
         network="kaitian",
@@ -245,7 +269,7 @@ def stream_logs(container, device_type):
         log_file.write("\n".join(logs))
 
 
-def docker_run(file):
+def docker_run(file, unknown_args):
     global coordinator
     client = docker.from_env()
     containers = {}
@@ -270,13 +294,15 @@ def docker_run(file):
         )
     try:
         coordinator = device_types[0]
-        global_rank_start = 0
         # create container
         for gloo_rank, device_type in enumerate(device_types):
             containers[device_type] = run_container(
-                device_type, file, gloo_rank, len(device_types), global_rank_start
+                device_type,
+                file,
+                gloo_rank,
+                len(device_types),
+                unknown_args,
             )
-            global_rank_start += device_counts[device_type]
         # return
         print("--------- Output -----------")
         log_threads = []
@@ -306,9 +332,34 @@ def docker_run(file):
         volume.remove()
 
 
-def run_kaitian(args):
+def use_devices():
+    global total_nums
+    try:
+        if USE_CUDA == "-1":
+            pass
+        elif USE_CUDA == "all":
+            total_nums += device_counts["CUDA"]
+        else:
+            devices_ids = [str(gpu_id) for gpu_id in map(int, USE_CUDA.split(","))]
+            total_nums += len(devices_ids)
+    except ValueError:
+        exit(f"[KaiTian][Error] The provided USE_CUDA is invalid: {USE_CUDA}")
+    try:
+        if USE_MLU == "-1":
+            pass
+        elif USE_MLU == "all":
+            total_nums += device_counts["MLU"]
+        else:
+            devices_ids = list(map(int, USE_MLU.split(",")))
+            total_nums += len(devices_ids)
+    except ValueError:
+        exit(f"[KaiTian][Error] The provided USE_MLU is invalid: {USE_MLU}")
+
+
+def run_kaitian(args, unknown_args):
     file = args.FILE
     if not os.path.exists(file):
         raise FileNotFoundError(f"{file} not found.")
-    find_device()
-    docker_run(file)
+    find_devices()
+    use_devices()
+    docker_run(file, unknown_args)

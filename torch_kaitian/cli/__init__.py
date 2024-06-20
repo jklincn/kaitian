@@ -1,4 +1,5 @@
 import argparse
+
 from .init import init_kaitian
 from .run import run_kaitian
 
@@ -46,3 +47,4 @@ def main():
         init_kaitian(known_args, unknown_args)
     elif known_args.command == "run":
         run_kaitian(known_args, unknown_args)
+

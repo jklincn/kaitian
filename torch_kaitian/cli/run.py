@@ -1,9 +1,9 @@
 import json
+import multiprocessing
 import os
 import shutil
 import subprocess
 import docker
-import threading
 
 total_nums = 0
 device_types = []
@@ -292,9 +292,15 @@ def docker_run(file, unknown_args):
             driver="local",
             driver_opts={"type": "tmpfs", "device": "tmpfs", "o": "size=100m"},
         )
+    # create monitor
+    monitor_stop_flag = multiprocessing.Value("b", False)
+    monitor_process = multiprocessing.Process(
+        target=run_monitor, args=(monitor_stop_flag,)
+    )
+    monitor_process.start()
+    # create container
     try:
         coordinator = device_types[0]
-        # create container
         for gloo_rank, device_type in enumerate(device_types):
             containers[device_type] = run_container(
                 device_type,
@@ -305,20 +311,22 @@ def docker_run(file, unknown_args):
             )
         # return
         print("--------- Output -----------")
-        log_threads = []
+        log_processes = []
         for device_type, container in containers.items():
-            thread = threading.Thread(target=stream_logs, args=(container, device_type))
-            thread.start()
-            log_threads.append(thread)
-        for thread in log_threads:
-            thread.join()
+            process = multiprocessing.Process(
+                target=stream_logs, args=(container, device_type)
+            )
+            process.start()
+            log_processes.append(process)
+
+        for process in log_processes:
+            process.join()
         print("--------- Finish -----------")
         for device_type in device_types:
             print(
                 f"{device_type} log file path: {os.path.dirname(os.path.abspath(__file__))}/log_{device_type}.txt",
                 flush=True,
             )
-
     except KeyboardInterrupt:
         print("Received KeyboardInterrupt. Stop and remove all containers.", flush=True)
     finally:
@@ -330,6 +338,8 @@ def docker_run(file, unknown_args):
                 container.remove(force=True)
         network.remove()
         volume.remove()
+    monitor_stop_flag.value = True
+    monitor_process.join()
 
 
 def use_devices():
@@ -354,6 +364,71 @@ def use_devices():
             total_nums += len(devices_ids)
     except ValueError:
         exit(f"[KaiTian][Error] The provided USE_MLU is invalid: {USE_MLU}")
+
+
+def run_monitor(stop_flag):
+    import subprocess
+    import re
+    import time
+
+    import matplotlib.pyplot as plt
+    from matplotlib.ticker import MaxNLocator
+
+    def get_cuda_utilization():
+        result = subprocess.run(
+            [
+                "nvidia-smi",
+                "--query-gpu=utilization.gpu",
+                "--format=csv,noheader,nounits",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        lines = result.stdout.strip().split("\n")
+        for i, line in enumerate(lines):
+            cuda_data[i].append(int(line))
+
+    def get_mlu_utilization():
+        result = subprocess.run(["cnmon"], capture_output=True, text=True)
+        lines = re.findall(r"\|\s\d+\s+/\s+.+?\|\s+(\d+)%\s+.*?\|", result.stdout)
+        for i, line in enumerate(lines):
+            mlu_data[i].append(int(line))
+
+    cuda_data = [[] for _ in range(2)]
+    mlu_data = [[] for _ in range(2)]
+
+    while not stop_flag.value:
+        start_time = time.time()
+        get_cuda_utilization()
+        get_mlu_utilization()
+        elapsed = time.time() - start_time
+        time.sleep(max(1 - elapsed, 0))
+
+    plt.figure(figsize=(10, 6))
+
+    # def moving_average(data, window_size):
+    #     cumsum_vec = np.cumsum(np.insert(data, 0, 0))
+    #     ma_vec = (cumsum_vec[window_size:] - cumsum_vec[:-window_size]) / window_size
+    #     ma_vec = np.insert(ma_vec, 0, [ma_vec[0]] * (window_size - 1))
+    #     return ma_vec
+
+    # window_size = 50
+    # # smoothed_single_losses = moving_average(single_losses, window_size)
+    # smoothed_mlu_data = moving_average(mlu_data, window_size)
+
+    for index, data in enumerate(cuda_data):
+        plt.plot(data, label=f"GPU{index}")
+    for index, data in enumerate(mlu_data):
+        plt.plot(data, label=f"MLU{index}")
+    plt.xlabel("Time (seconds)")
+    plt.ylabel("Utilization (%)")
+    plt.title("Accelerators Utilization Over Time")
+    plt.ylim(0, 100)
+    plt.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
+    plt.legend()
+    plt.grid(True)
+    plt.savefig("utilization.png")
+    plt.close()
 
 
 def run_kaitian(args, unknown_args):

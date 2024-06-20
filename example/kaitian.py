@@ -10,13 +10,13 @@ import torch.optim as optim
 import torchvision.transforms as transforms
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader
-from torch.utils.data.distributed import DistributedSampler
 from torchvision import datasets, models
 
 import torch_kaitian
+from torch_kaitian import DistributedSampler
 
 # Setting default values
-default_num_epochs = 1
+default_num_epochs = 2
 default_lr = 0.001
 default_batch_size = 64
 device = torch_kaitian.device()
@@ -64,22 +64,13 @@ def run(rank, world_size):
         ]
     )
     train_set = datasets.CIFAR10(root="./data", train=True, transform=transform)
-    train_sampler = DistributedSampler(
-        train_set,
-        num_replicas=torch_kaitian.global_world_size(),
-        rank=torch_kaitian.global_rank(),
-    )
+    train_sampler = DistributedSampler(train_set)
     train_loader = DataLoader(
         train_set, batch_size=batch_size, sampler=train_sampler, num_workers=2
     )
 
     test_set = datasets.CIFAR10(root="./data", train=False, transform=transform)
-    test_sampler = DistributedSampler(
-        test_set,
-        num_replicas=torch_kaitian.global_world_size(),
-        rank=torch_kaitian.global_rank(),
-        shuffle=False,
-    )
+    test_sampler = DistributedSampler(test_set, shuffle=False)
     test_loader = DataLoader(
         test_set, batch_size=batch_size, sampler=test_sampler, num_workers=2
     )

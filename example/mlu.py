@@ -15,7 +15,7 @@ from torch.utils.data.distributed import DistributedSampler
 from torchvision import datasets, models
 
 # Setting default values
-default_num_epochs = 1
+default_num_epochs = 2
 default_lr = 0.001
 default_batch_size = 64
 device = "mlu"

@@ -41,10 +41,15 @@ def main():
         action="store_true",
         help="Enable quiet mode, less output is printed",
     )
+    parser_run.add_argument(
+        "-d",
+        "--develop",
+        action="store_true",
+        help="Enable development mode",
+    )
 
     known_args, unknown_args = parser.parse_known_args()
     if known_args.command == "init":
         init_kaitian(known_args, unknown_args)
     elif known_args.command == "run":
         run_kaitian(known_args, unknown_args)
-

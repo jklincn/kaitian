@@ -7,18 +7,14 @@ from datetime import datetime
 import docker
 import tomlkit
 
-USE_CUDA = True if os.environ.get("USE_CUDA", "1") == "1" else False
-USE_MLU = True if os.environ.get("USE_MLU", "1") == "1" else False
+from ..benchmark import run_benchmark_inner
+from ..config import CUDA_IMAGE, MLU_IMAGE, MAX_COMPUTE_CAPABILITY
 
-CUDA_BASE_IMAGE = "pytorch/pytorch:1.13.1-cuda11.6-cudnn8-devel"
-CUDA_IMAGE = "jklincn/kaitian:0.0.0-cuda"
-MLU_BASE_IMAGE = (
-    "yellow.hub.cambricon.com/pytorch/pytorch:v1.17.0-torch1.13.1-ubuntu20.04-py310"
-)
-MLU_IMAGE = "jklincn/kaitian:0.0.0-mlu"
+config_dir = os.path.join(os.path.expanduser("~"), ".config", "kaitian")
+config_file = os.path.join(config_dir, "kaitian.toml")
 
 
-def find_cuda(config_data):
+def find_cuda(config_data: tomlkit.TOMLDocument):
     if shutil.which("nvidia-smi") is None:
         print("[KaiTian][Info] nvidia-smi not found, skip CUDA.")
         return
@@ -53,6 +49,7 @@ def find_cuda(config_data):
     cuda.add("image", CUDA_IMAGE)
     for i, gpu_info in enumerate(gpu_info_list):
         cuda_device = tomlkit.table()
+        cuda_device["device_number"] = f"cuda:{i}"
         cuda_device["name"] = gpu_info["model"]
         cuda_device["bus_id"] = gpu_info["bus_id"]
         cuda_device["link_status"] = (
@@ -60,13 +57,10 @@ def find_cuda(config_data):
         )
         cuda_device["memory"] = gpu_info["memory_total"]
         cuda.add(f"cuda{i}", cuda_device)
-
     config_data["devices"].add("cuda", cuda)
-    # device_counts["CUDA"] = len(gpu_info_list)
-    return len(gpu_info_list)
 
 
-def find_mlu(config_data):
+def find_mlu(config_data: tomlkit.TOMLDocument):
     if shutil.which("cnmon") is None:
         print("[KaiTian][Info] cnmon not found, skip MLU.")
         return
@@ -100,6 +94,7 @@ def find_mlu(config_data):
             else "downgraded"
         )
         mlu_device = tomlkit.table()
+        mlu_device["device_number"] = f"mlu:{i}"
         mlu_device["name"] = info["CnmonInfo"][i]["ProductName"]
         mlu_device["bus_id"] = (
             f"{pci['DomainID']}:{pci['Bus']}:{pci['Device']}.{pci['Function']}"
@@ -111,146 +106,95 @@ def find_mlu(config_data):
             f"{info['CnmonInfo'][i]['PhysicalMemUsage']['Total']} MiB"
         )
         mlu.add(f"mlu{i}", mlu_device)
-    # device_counts["MLU"] = count
     config_data["devices"].add("mlu", mlu)
-    return count
 
 
-def check_cuda():
-    client = docker.from_env()
-    try:
-        client.images.get(CUDA_BASE_IMAGE)
-    except docker.errors.ImageNotFound:
-        print(f"Image {CUDA_BASE_IMAGE} does not exist.")
-        print(f"You must `docker pull {CUDA_BASE_IMAGE}` first.")
-        exit()
-    try:
-        client.images.get(CUDA_IMAGE)
-    except docker.errors.ImageNotFound:
-        print(f"Image {CUDA_IMAGE} does not exist.")
-        print(f"Building {CUDA_IMAGE}...")
-        build_command = [
-            "docker",
-            "build",
-            "-t",
-            CUDA_IMAGE,
-            "--build-arg",
-            f"IMAGE={CUDA_BASE_IMAGE}",
-            "--build-arg",
-            "DEVICE=CUDA",
-            os.path.dirname(os.path.abspath(__file__)),
-        ]
-        process = subprocess.Popen(
-            build_command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-
-        while True:
-            output = process.stdout.readline()
-            if output == "" and process.poll() is not None:
-                exit_code = process.poll()
-                if exit_code != 0:
-                    exit("image build error: ", exit_code)
-                break
-            if output:
-                print(output.strip(), flush=True)
-
-    print(f"Use CUDA Image: {CUDA_IMAGE}")
-    # device_types.append("CUDA")
-
-
-def check_mlu():
-    client = docker.from_env()
-    try:
-        client.images.get(MLU_BASE_IMAGE)
-    except docker.errors.ImageNotFound:
-        print(f"Image {MLU_BASE_IMAGE} does not exist.")
-        print(
-            f"You must get {MLU_BASE_IMAGE} first. See https://sdk.cambricon.com/download?component_name=PyTorch"
-        )
-        exit()
-    try:
-        client.images.get(MLU_IMAGE)
-    except docker.errors.ImageNotFound:
-        print(f"Image {MLU_IMAGE} does not exist.")
-        print(f"Building {MLU_IMAGE}...")
-        build_command = [
-            "docker",
-            "build",
-            "-t",
-            MLU_IMAGE,
-            "--build-arg",
-            f"IMAGE={MLU_BASE_IMAGE}",
-            "--build-arg",
-            "DEVICE=MLU",
-            os.path.dirname(os.path.abspath(__file__)),
-        ]
-        process = subprocess.Popen(
-            build_command,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-
-        while True:
-            output = process.stdout.readline()
-            if output == "" and process.poll() is not None:
-                exit_code = process.poll()
-                if exit_code != 0:
-                    exit("image build error: ", exit_code)
-                break
-            if output:
-                print(output.strip(), flush=True)
-
-    print(f"Use MLU Image: {MLU_IMAGE}")
-    # device_types.append("MLU")
-
-
-def find_device(config_data):
+# find all available devices by default
+def find_devices(config_data):
+    print("[KaiTian][Info] Looking for available devices")
+    find_cuda(config_data)
+    find_mlu(config_data)
+    # print devices information
     print("-----------------------------")
-    if USE_CUDA:
-        cuda_count = find_cuda(config_data)
-        if cuda_count > 0:
-            # check_cuda()
-            print("-----------------------------")
-    if USE_MLU:
-        mlu_count = find_mlu(config_data)
-        if mlu_count > 0:
-            # check_mlu()
-            print("-----------------------------")
-    # for device_type in device_types:
-    #     total_nums += device_counts[device_type]
+    for device_type in config_data["devices"]:
+        for _, detail in config_data["devices"][device_type].items():
+            if isinstance(detail, dict):
+                print(f"Device Number: {detail['device_number']}")
+                print(f"Name: {detail['name']}")
+                print(f"Bus Id: {detail['bus_id']}")
+                print(f"Link Status: {detail['link_status']}")
+                print(f"Memory: {detail['memory']}")
+                print("-----------------------------")
 
 
-def init_kaitian(args, unknown_args):
+def pull_images(config_data: tomlkit.TOMLDocument):
+    print("[KaiTian][Info] Pulling relevant images")
+    client = docker.from_env()
+    for device_type in config_data["devices"]:
+        image = config_data["devices"][device_type]["image"]
+        try:
+            client.images.get(image)
+            print(f"[KaiTian][Info] {image} already exists.")
+        except docker.errors.ImageNotFound:
+            print(f"[KaiTian][Info] Pulling {image}")
+            resp = client.api.pull(image, stream=True, decode=True)
+            for line in resp:
+                print(json.dumps(line, indent=4))
 
-    # 定义配置文件路径
-    config_dir = os.path.join(os.path.expanduser("~"), ".config", "kaitian")
-    config_file = os.path.join(config_dir, "kaitian.toml")
 
-    # 确保配置目录存在
-    if not os.path.exists(config_dir):
-        os.makedirs(config_dir)
+def run_benchmark(config_data: tomlkit.TOMLDocument):
+    print("[KaiTian][Info] Running the benchmark for each device")
+    benchmark_result = {}
+    for device_type in config_data["devices"]:
+        for device, detail in config_data["devices"][device_type].items():
+            if isinstance(detail, dict):
+                benchmark_result[device] = run_benchmark_inner(detail["device_number"])
+    min_time = min(benchmark_result.values())
+    for device_type in config_data["devices"]:
+        for device, detail in config_data["devices"][device_type].items():
+            if isinstance(detail, dict):
+                detail["compute_capability"] = round(
+                    min_time / benchmark_result[device] * MAX_COMPUTE_CAPABILITY, 1
+                )
 
-    # 定义初始配置内容
+
+def create_config() -> tomlkit.TOMLDocument:
+    print(f"[KaiTian][Info] Creating configuration file ({config_file})")
+
+    # 1. create empty config and write creation time
     config_data = tomlkit.document()
     creation_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     config_data.add("create_time", creation_time)
     config_data.add("devices", tomlkit.table())
 
-    # 如果配置文件不存在，则创建并写入初始数据
-    if args.force or not os.path.isfile(config_file):
-        find_device(config_data)
+    # 2. add device information
+    find_devices(config_data)
+
+    # 3. pull images
+    pull_images(config_data)
+
+    # 4. run benchmark for each device
+    run_benchmark(config_data)
+
+    # 5. done
+    return config_data
+
+
+def init_kaitian(args, unknown_args):
+    if not os.path.exists(config_dir):
+        os.makedirs(config_dir)
+
+    if not os.path.isfile(config_file) or args.force:
+        # configuration file does not exist or is forcibly overwritten
+        config_data = create_config()
         with open(config_file, "w") as file:
             file.write(tomlkit.dumps(config_data))
     else:
+        # configuration file already exists
         with open(config_file, "r") as file:
             data = tomlkit.loads(file.read())
             created_time = data.get("create_time")
             created_datetime = datetime.strptime(created_time, "%Y-%m-%d %H:%M:%S")
-            formatted_time = created_datetime.strftime("%H:%M on June %d, %Y")
             print(
-                f"[KaiTian][Warning] KaiTian has been initialized at {formatted_time}. You can use '-f' or '--force' to reinitialize."
+                f"[KaiTian][Warning] KaiTian has already been initialized as of {created_datetime}. Use the '-f' or '--force' option to reinitialize if necessary."
             )

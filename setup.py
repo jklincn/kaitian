@@ -1,11 +1,12 @@
 import glob
 import os
+from pathlib import Path
 
 from setuptools import find_packages, setup
 from torch.utils import cpp_extension
 
 # kaitian config
-kaitian_path = os.path.dirname(os.path.abspath(__file__))
+kaitian_path = Path(__file__).resolve().parent
 sources = glob.glob(f"{kaitian_path}/src/*.cpp")
 include_dirs = [f"{kaitian_path}/include"]
 library_dirs = []
@@ -61,7 +62,9 @@ def cuda_support():
 
 def setup_extension():
     device_type = os.environ.get("DEVICE")
-
+    ext_modules = []
+    cmdclass = {}
+    entry_points = {}
     if device_type:
         match device_type:
             case "MLU":
@@ -84,10 +87,7 @@ def setup_extension():
             )
         ]
         cmdclass = {"build_ext": cpp_extension.BuildExtension}
-        entry_points = {}
     else:
-        ext_modules = []
-        cmdclass = {}
         entry_points = {"console_scripts": ["kaitian=torch_kaitian.cli:main"]}
 
     return ext_modules, cmdclass, entry_points
@@ -95,9 +95,13 @@ def setup_extension():
 
 ext_modules, cmdclass, entry_points = setup_extension()
 
+version_file_path = kaitian_path / "version.txt"
+with open(version_file_path, "r") as file:
+    version = file.read()
+
 setup(
     name="torch_kaitian",
-    version="0.0.0",
+    version=version,
     description="KaiTian is a Pytorch backend extension that enables distributed data parallel for heterogeneous devices.",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",

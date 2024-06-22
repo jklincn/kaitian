@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader
 from torchvision import datasets, models
 
 import torch_kaitian
-from torch_kaitian import DistributedSampler
+from torch_kaitian.distributed import DistributedSampler, optimize_batch_size
 
 # Setting default values
 default_num_epochs = 2
@@ -55,6 +55,7 @@ def set_seed(seed):
 def run(rank, world_size):
     setup(rank, world_size)
     set_seed(world_size)  # using a random number is also acceptable
+
     transform = transforms.Compose(
         [
             transforms.Resize(256),
@@ -64,13 +65,16 @@ def run(rank, world_size):
         ]
     )
     train_set = datasets.CIFAR10(root="./data", train=True, transform=transform)
-    train_sampler = DistributedSampler(train_set)
+    train_sampler = DistributedSampler(train_set, batch_size)
     train_loader = DataLoader(
-        train_set, batch_size=batch_size, sampler=train_sampler, num_workers=2
+        train_set,
+        batch_size=optimize_batch_size(args.batch_size),
+        sampler=train_sampler,
+        num_workers=2,
     )
 
     test_set = datasets.CIFAR10(root="./data", train=False, transform=transform)
-    test_sampler = DistributedSampler(test_set, shuffle=False)
+    test_sampler = DistributedSampler(test_set, batch_size, shuffle=False)
     test_loader = DataLoader(
         test_set, batch_size=batch_size, sampler=test_sampler, num_workers=2
     )

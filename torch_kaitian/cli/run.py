@@ -3,7 +3,11 @@ import multiprocessing
 import os
 import shutil
 import subprocess
+
 import docker
+
+from ..config import CUDA_BASE_IMAGE, CUDA_IMAGE, MLU_BASE_IMAGE, MLU_IMAGE
+from .monitor import run_monitor
 
 total_nums = 0
 device_types = []
@@ -13,13 +17,6 @@ global_rank_start = 0
 
 USE_CUDA = os.environ.get("USE_CUDA", "all")
 USE_MLU = os.environ.get("USE_MLU", "all")
-
-CUDA_BASE_IMAGE = "pytorch/pytorch:1.13.1-cuda11.6-cudnn8-devel"
-CUDA_IMAGE = "jklincn/kaitian:0.0.0-cuda"
-MLU_BASE_IMAGE = (
-    "yellow.hub.cambricon.com/pytorch/pytorch:v1.17.0-torch1.13.1-ubuntu20.04-py310"
-)
-MLU_IMAGE = "jklincn/kaitian:0.0.0-mlu"
 
 
 def find_cuda():
@@ -195,6 +192,7 @@ def run_container(device_type, file, gloo_rank, gloo_world_size, unknown_args):
         "KAITIAN_GLOBAL_WORLD_SIZE": total_nums,
         "KAITIAN_GLOO_RANK": gloo_rank,
         "KAITIAN_GLOO_WORLD_SIZE": gloo_world_size,
+        "CUDA_COMPUTE_CAPABILTY": "5",
     }
     volumes = [
         "kaitian:/tmp/gloo",
@@ -261,15 +259,22 @@ def run_container(device_type, file, gloo_rank, gloo_world_size, unknown_args):
 
 
 def stream_logs(container, device_type):
-    logs = []
-    for line in container.logs(stream=True, follow=True):
-        logs.append(line.decode().strip())
-        print(f"[{device_type}] {line.decode().strip()}", flush=True)
-    with open(f"log_{device_type}.txt", "w") as log_file:
-        log_file.write("\n".join(logs))
+    try:
+        logs = []
+        for line in container.logs(stream=True, follow=True):
+            logs.append(line.decode().strip())
+            print(f"[{device_type}] {line.decode().strip()}", flush=True)
+    except:
+        pass
+    finally:
+        with open(f"log_{device_type}.txt", "w") as log_file:
+            log_file.write("\n".join(logs))
 
 
-def docker_run(file, unknown_args):
+def docker_run(args, unknown_args):
+    file = args.FILE
+    if not os.path.exists(file):
+        raise FileNotFoundError(f"{file} not found.")
     global coordinator
     client = docker.from_env()
     containers = {}
@@ -310,6 +315,7 @@ def docker_run(file, unknown_args):
                 unknown_args,
             )
         # return
+        # get output
         print("--------- Output -----------")
         log_processes = []
         for device_type, container in containers.items():
@@ -366,75 +372,7 @@ def use_devices():
         exit(f"[KaiTian][Error] The provided USE_MLU is invalid: {USE_MLU}")
 
 
-def run_monitor(stop_flag):
-    import subprocess
-    import re
-    import time
-
-    import matplotlib.pyplot as plt
-    from matplotlib.ticker import MaxNLocator
-
-    def get_cuda_utilization():
-        result = subprocess.run(
-            [
-                "nvidia-smi",
-                "--query-gpu=utilization.gpu",
-                "--format=csv,noheader,nounits",
-            ],
-            capture_output=True,
-            text=True,
-        )
-        lines = result.stdout.strip().split("\n")
-        for i, line in enumerate(lines):
-            cuda_data[i].append(int(line))
-
-    def get_mlu_utilization():
-        result = subprocess.run(["cnmon"], capture_output=True, text=True)
-        lines = re.findall(r"\|\s\d+\s+/\s+.+?\|\s+(\d+)%\s+.*?\|", result.stdout)
-        for i, line in enumerate(lines):
-            mlu_data[i].append(int(line))
-
-    cuda_data = [[] for _ in range(2)]
-    mlu_data = [[] for _ in range(2)]
-
-    while not stop_flag.value:
-        start_time = time.time()
-        get_cuda_utilization()
-        get_mlu_utilization()
-        elapsed = time.time() - start_time
-        time.sleep(max(1 - elapsed, 0))
-
-    plt.figure(figsize=(10, 6))
-
-    # def moving_average(data, window_size):
-    #     cumsum_vec = np.cumsum(np.insert(data, 0, 0))
-    #     ma_vec = (cumsum_vec[window_size:] - cumsum_vec[:-window_size]) / window_size
-    #     ma_vec = np.insert(ma_vec, 0, [ma_vec[0]] * (window_size - 1))
-    #     return ma_vec
-
-    # window_size = 50
-    # # smoothed_single_losses = moving_average(single_losses, window_size)
-    # smoothed_mlu_data = moving_average(mlu_data, window_size)
-
-    for index, data in enumerate(cuda_data):
-        plt.plot(data, label=f"GPU{index}")
-    for index, data in enumerate(mlu_data):
-        plt.plot(data, label=f"MLU{index}")
-    plt.xlabel("Time (seconds)")
-    plt.ylabel("Utilization (%)")
-    plt.title("Accelerators Utilization Over Time")
-    plt.ylim(0, 100)
-    plt.gca().xaxis.set_major_locator(MaxNLocator(integer=True))
-    plt.legend()
-    plt.grid(True)
-    plt.savefig("utilization.png")
-    plt.close()
-
-
 def run_kaitian(args, unknown_args):
-    file = args.FILE
-    if not os.path.exists(file):
-        raise FileNotFoundError(f"{file} not found.")
     find_devices()
     use_devices()
-    docker_run(file, unknown_args)
+    docker_run(args, unknown_args)

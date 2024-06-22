@@ -8,10 +8,13 @@ import docker
 import tomlkit
 
 from ..benchmark import run_benchmark_inner
-from ..config import CUDA_IMAGE, MLU_IMAGE, MAX_COMPUTE_CAPABILITY
-
-config_dir = os.path.join(os.path.expanduser("~"), ".config", "kaitian")
-config_file = os.path.join(config_dir, "kaitian.toml")
+from ..config import (
+    CONFIG_DIR,
+    CONFIG_FILE,
+    CUDA_IMAGE,
+    MAX_COMPUTE_CAPABILITY,
+    MLU_IMAGE,
+)
 
 
 def find_cuda(config_data: tomlkit.TOMLDocument):
@@ -181,17 +184,17 @@ def create_config() -> tomlkit.TOMLDocument:
 
 
 def init_kaitian(args, unknown_args):
-    if not os.path.exists(config_dir):
-        os.makedirs(config_dir)
+    if not os.path.exists(CONFIG_DIR):
+        os.makedirs(CONFIG_DIR)
 
-    if not os.path.isfile(config_file) or args.force:
+    if not os.path.isfile(CONFIG_FILE) or args.force:
         # configuration file does not exist or is forcibly overwritten
         config_data = create_config()
-        with open(config_file, "w") as file:
+        with open(CONFIG_FILE, "w") as file:
             file.write(tomlkit.dumps(config_data))
     else:
         # configuration file already exists
-        with open(config_file, "r") as file:
+        with open(CONFIG_FILE, "r") as file:
             data = tomlkit.loads(file.read())
             created_time = data.get("create_time")
             created_datetime = datetime.strptime(created_time, "%Y-%m-%d %H:%M:%S")

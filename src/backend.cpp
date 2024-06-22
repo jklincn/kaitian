@@ -4,12 +4,12 @@
 #include <c10/core/Device.h>
 #include <pybind11/chrono.h>
 #include <torch/torch.h>
+#include <torch/types.h>
 
 #include <cstdlib>
 
 #include "gloo.hpp"
 #include "support.hpp"
-#include "torch/types.h"
 
 namespace c10d {
 WorkKaiTian::WorkKaiTian(at::Device device) : device_(device) {
@@ -43,7 +43,7 @@ ProcessGroupKaiTian::ProcessGroupKaiTian(
         c10::make_intrusive<ProcessGroupNCCL>(store, rank, size);
 #endif
     if (rank == 0) {
-        auto fileStore = gloo::rendezvous::FileStore("/tmp/gloo");
+        auto fileStore = gloo::rendezvous::FileStore("/tmp/kaitian");
         auto dev = gloo::transport::tcp::CreateDevice(getenv("DEVICE"));
         kaitian_gloo_world_size = atoi(getenv("KAITIAN_GLOO_WORLD_SIZE"));
         context = std::make_shared<gloo::rendezvous::Context>(

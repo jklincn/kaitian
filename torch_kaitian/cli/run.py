@@ -1,251 +1,63 @@
-import json
 import multiprocessing
 import os
-import shutil
 import subprocess
+from pathlib import Path
 
 import docker
+import tomlkit
 
-from ..config import CUDA_BASE_IMAGE, CUDA_IMAGE, MLU_BASE_IMAGE, MLU_IMAGE
+from ..config import CONFIG_FILE, CUDA_BASE_IMAGE, CUDA_IMAGE, MLU_BASE_IMAGE, MLU_IMAGE
 from .monitor import run_monitor
 
-total_nums = 0
-device_types = []
-device_counts = {}
-coordinator = ""
-global_rank_start = 0
 
-USE_CUDA = os.environ.get("USE_CUDA", "all")
-USE_MLU = os.environ.get("USE_MLU", "all")
-
-
-def find_cuda():
-    if shutil.which("nvidia-smi") is None:
-        return
-    result = subprocess.run(
-        "nvidia-smi --query-gpu=name,pci.bus_id,pcie.link.gen.current,pcie.link.width.current,pcie.link.gen.max,pcie.link.width.max,memory.total --format=csv,noheader",
-        shell=True,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=True,
-    )
-    lines = result.stdout.strip().split("\n")
-
-    def parse_gpu_info(gpu_str):
-        parts = gpu_str.split(", ")
-        gpu_info = {
-            "model": parts[0],
-            "bus_id": parts[1],
-            "current_pcie_link_gen": parts[2],
-            "current_pcie_link_width": parts[3],
-            "max_pcie_link_gen": parts[4],
-            "max_pcie_link_width": parts[5],
-            "link_ok": (
-                "ok" if parts[2] == parts[4] and parts[3] == parts[5] else "downgraded"
-            ),
-            "memory_total": parts[6],
-        }
-        return gpu_info
-
-    gpu_info_list = [parse_gpu_info(line) for line in lines if line.strip()]
-    for gpu_info in gpu_info_list:
-        print(f"Find {gpu_info['model']}")
-        print(f"Bus Id: {gpu_info['bus_id']}")
-        print(
-            f"Link Status: PCIe Gen{gpu_info['current_pcie_link_gen']} x{gpu_info['current_pcie_link_width']} ({gpu_info['link_ok']})"
-        )
-        print(f"Memory: {gpu_info['memory_total']}")
-        print("-----------------------------")
-    device_counts["CUDA"] = len(gpu_info_list)
-    return len(gpu_info_list)
-
-
-def find_mlu():
-    if shutil.which("cnmon") is None:
-        return
-    subprocess.run(
-        "cnmon info -j",
-        shell=True,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        check=True,
-    )
-    with open("cnmon_info.json", "r") as f:
-        info = json.load(f)
-        count = len(info["CnmonInfo"])
-    os.remove("cnmon_info.json")
-    for i in range(count):
-        pci = info["CnmonInfo"][i]["PCI"]
-        speed = {
-            "2.5 GT/s": "1",
-            "5 GT/s": "2",
-            "8 GT/s": "3",
-            "16 GT/s": "4",
-            "32 GT/s": "5",
-        }
-        link_ok = (
-            "ok"
-            if pci["CurrentSpeed"] == pci["MaxSpeed"]
-            and pci["CurrentWidth"] == pci["MaxWidth"]
-            else "downgraded"
-        )
-        print(f"Find {info['CnmonInfo'][i]['ProductName']}")
-        print(
-            f"Bus Id: {pci['DomainID']}:{pci['Bus']}:{pci['Device']}.{pci['Function']}"
-        )
-        print(
-            f"Link Status: PCIe Gen{speed[pci['CurrentSpeed']]} {pci['CurrentWidth']} ({link_ok})"
-        )
-        print(f"Memory: {info['CnmonInfo'][i]['PhysicalMemUsage']['Total']} MiB")
-        print("-----------------------------")
-    device_counts["MLU"] = count
-    return count
-
-
-def check_image(device_type):
-    match device_type:
-        case "CUDA":
-            base_image = CUDA_BASE_IMAGE
-            image = CUDA_IMAGE
-        case "MLU":
-            base_image = MLU_BASE_IMAGE
-            image = MLU_IMAGE
-        case _:
-            raise RuntimeError(
-                f"[KaiTian][Error] Internal error: unmatched device_type {device_type}."
-            )
-    client = docker.from_env()
-    try:
-        client.images.get(base_image)
-    except docker.errors.ImageNotFound:
-        print(f"Image {base_image} does not exist.")
-        match device_type:
-            case "CUDA":
-                print(f"You must `docker pull {base_image}` first.")
-            case "MLU":
-                print(
-                    f"You must get {base_image} first. See https://sdk.cambricon.com/download?component_name=PyTorch"
-                )
-        exit()
-
-    try:
-        client.images.get(image)
-    except docker.errors.ImageNotFound:
-        print(f"Image {image} does not exist.")
-        print(f"Building {image}...")
-        build_command = [
-            "docker",
-            "build",
-            "-t",
-            image,
-            "--build-arg",
-            f"IMAGE={base_image}",
-            "--build-arg",
-            f"DEVICE={device_type}",
-            ".",
-        ]
-        process = subprocess.Popen(
-            build_command,
-            cwd=os.getcwd(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True,
-        )
-
-        while True:
-            output = process.stdout.readline()
-            if output == "" and process.poll() is not None:
-                exit_code = process.poll()
-                if exit_code != 0:
-                    exit(f"Image build error: {exit_code}")
-                break
-            if output:
-                print(output.strip(), flush=True)
-
-    print(f"Use {device_type} Image: {image}")
-    device_types.append(device_type)
-
-
-def find_devices():
-    print("-----------------------------")
-    if USE_CUDA != "-1":
-        find_cuda()
-        if device_counts["CUDA"] > 0:
-            check_image("CUDA")
-            print("-----------------------------")
-    if USE_MLU != "-1":
-        find_mlu()
-        if device_counts["MLU"] > 0:
-            check_image("MLU")
-            print("-----------------------------")
-
-
-def run_container(device_type, file, gloo_rank, gloo_world_size, unknown_args):
-    global global_rank_start
+def run_container(
+    device_type: str,
+    device_ids: list[str],
+    file: str,
+    gloo_rank: int,
+    gloo_world_size: int,
+    global_world_size: int,
+    global_rank_start: int,
+    unknown_args,
+):
     print(f"Running {device_type} container...")
     client = docker.from_env()
     command = ["python", f"/{os.path.basename(file)}"] + unknown_args
     environment = {
-        "KAITIAN_GLOBAL_RANK_START": global_rank_start,
-        "KAITIAN_GLOBAL_WORLD_SIZE": total_nums,
         "KAITIAN_GLOO_RANK": gloo_rank,
         "KAITIAN_GLOO_WORLD_SIZE": gloo_world_size,
-        "CUDA_COMPUTE_CAPABILTY": "5",
+        "KAITIAN_GLOBAL_WORLD_SIZE": global_world_size,
+        "KAITIAN_GLOBAL_RANK_START": global_rank_start,
+        "KAITIAN_COMPUTE_CAPABILTY": "6",
+        "KAITIAN_TOTAL_COMPUTE_CAPABILTY": "",
     }
+    file_path = Path(file).resolve()
     volumes = [
-        "kaitian:/tmp/gloo",
-        f"{os.path.abspath(file)}:/{os.path.basename(file)}",
-        f"{os.path.dirname(os.path.abspath(file))}/data:/data",
+        "kaitian:/tmp/kaitian",
+        f"{file_path}:/{file_path.name}",
+        f"{file_path.parent}/data:/data",
         f"/home/lin/.cache/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints",
     ]
+    device_requests = None
+    devices = None
     match device_type:
-        case "CUDA":
-            try:
-                if USE_CUDA == "all":
-                    device_requests = [
-                        docker.types.DeviceRequest(capabilities=[["gpu"]])
-                    ]
-                    global_rank_start += device_counts["CUDA"]
-                else:
-                    devices_ids = [
-                        str(gpu_id) for gpu_id in map(int, USE_CUDA.split(","))
-                    ]
-                    device_requests = [
-                        docker.types.DeviceRequest(
-                            device_ids=devices_ids, capabilities=[["gpu"]]
-                        )
-                    ]
-                    global_rank_start += len(devices_ids)
-            except ValueError:
-                exit(f"[KaiTian][Error] The provided USE_CUDA is invalid: {USE_CUDA}")
-            devices = None
+        case "cuda":
+            device_requests = [
+                docker.types.DeviceRequest(
+                    device_ids=device_ids, capabilities=[["gpu"]]
+                )
+            ]
             image = CUDA_IMAGE
-        case "MLU":
-            device_requests = None
+        case "mlu":
             # Compatible with MLU370
             devices = ["/dev/cambricon_ctl"]
-            try:
-                if USE_MLU == "all":
-                    for i in range(device_counts["MLU"]):
-                        devices.extend(
-                            [f"/dev/cambricon_dev{i}", f"/dev/cambricon_ipcm{i}"]
-                        )
-                else:
-                    devices_ids = list(map(int, USE_MLU.split(",")))
-                    for i in range(device_counts["MLU"]):
-                        if i in devices_ids:
-                            devices.extend(
-                                [f"/dev/cambricon_dev{i}", f"/dev/cambricon_ipcm{i}"]
-                            )
-            except ValueError:
-                exit(f"[KaiTian][Error] The provided USE_MLU is invalid: {USE_MLU}")
+            for i in device_ids:
+                devices.extend([f"/dev/cambricon_dev{i}", f"/dev/cambricon_ipcm{i}"])
             image = MLU_IMAGE
     return client.containers.run(
         detach=True,
         network="kaitian",
-        name=device_type,
+        name=f"kaitian_{device_type}",
         hostname=device_type,
         environment=environment,
         device_requests=device_requests,
@@ -271,20 +83,18 @@ def stream_logs(container, device_type):
             log_file.write("\n".join(logs))
 
 
-def docker_run(args, unknown_args):
-    file = args.FILE
-    if not os.path.exists(file):
-        raise FileNotFoundError(f"{file} not found.")
-    global coordinator
+def docker_run(args, unknown_args, device_list: list[str]):
+    if len(device_list) == 0:
+        exit(f"[KaiTian][Error] No device specified for use.")
     client = docker.from_env()
     containers = {}
-    if len(device_types) == 0:
-        exit("No device available.")
+
     # create network
     try:
         network = client.networks.get("kaitian")
     except docker.errors.NotFound:
         network = client.networks.create("kaitian", driver="bridge")
+
     # create volume
     try:
         volume = client.volumes.get("kaitian")
@@ -297,24 +107,39 @@ def docker_run(args, unknown_args):
             driver="local",
             driver_opts={"type": "tmpfs", "device": "tmpfs", "o": "size=100m"},
         )
+
     # create monitor
-    monitor_stop_flag = multiprocessing.Value("b", False)
-    monitor_process = multiprocessing.Process(
-        target=run_monitor, args=(monitor_stop_flag,)
-    )
-    monitor_process.start()
+    if args.develop:
+        monitor_stop_flag = multiprocessing.Value("b", False)
+        monitor_process = multiprocessing.Process(
+            target=run_monitor, args=(monitor_stop_flag,)
+        )
+        monitor_process.start()
+
     # create container
+    device_types = set(device.split(":")[0] for device in device_list)
+    gloo_world_size = len(device_types)
+    global_world_size = len(device_list)
+    global_rank_start = 0
     try:
-        coordinator = device_types[0]
         for gloo_rank, device_type in enumerate(device_types):
+            device_ids = [
+                device.split(":")[1] for device in device_list if device_type in device
+            ]
             containers[device_type] = run_container(
                 device_type,
-                file,
+                device_ids,
+                args.FILE,
                 gloo_rank,
-                len(device_types),
+                gloo_world_size,
+                global_world_size,
+                global_rank_start,
                 unknown_args,
             )
-        # return
+            device_count = sum(
+                1 for device in device_list if device.startswith(device_type)
+            )
+            global_rank_start += device_count
         # get output
         print("--------- Output -----------")
         log_processes = []
@@ -324,55 +149,135 @@ def docker_run(args, unknown_args):
             )
             process.start()
             log_processes.append(process)
-
         for process in log_processes:
             process.join()
         print("--------- Finish -----------")
         for device_type in device_types:
             print(
-                f"{device_type} log file path: {os.path.dirname(os.path.abspath(__file__))}/log_{device_type}.txt",
+                f"{device_type.upper()} log: {Path.cwd()}/log_{device_type}.txt",
                 flush=True,
             )
     except KeyboardInterrupt:
-        print("Received KeyboardInterrupt. Stop and remove all containers.", flush=True)
+        print(
+            "\n[KaiTian][Info] Received KeyboardInterrupt. Stop and clean up.",
+            flush=True,
+        )
     finally:
         # return
         all_containers = client.containers.list(all=True)
+        container_names = [f"kaitian_{device_type}" for device_type in device_types]
         for container in all_containers:
             container_name = container.attrs["Name"].strip("/")
-            if container_name in device_types:
+            if container_name in container_names:
                 container.remove(force=True)
         network.remove()
         volume.remove()
-    monitor_stop_flag.value = True
-    monitor_process.join()
+
+    if args.develop:
+        monitor_stop_flag.value = True
+        monitor_process.join()
 
 
-def use_devices():
-    global total_nums
-    try:
-        if USE_CUDA == "-1":
-            pass
-        elif USE_CUDA == "all":
-            total_nums += device_counts["CUDA"]
-        else:
-            devices_ids = [str(gpu_id) for gpu_id in map(int, USE_CUDA.split(","))]
-            total_nums += len(devices_ids)
-    except ValueError:
-        exit(f"[KaiTian][Error] The provided USE_CUDA is invalid: {USE_CUDA}")
-    try:
-        if USE_MLU == "-1":
-            pass
-        elif USE_MLU == "all":
-            total_nums += device_counts["MLU"]
-        else:
-            devices_ids = list(map(int, USE_MLU.split(",")))
-            total_nums += len(devices_ids)
-    except ValueError:
-        exit(f"[KaiTian][Error] The provided USE_MLU is invalid: {USE_MLU}")
+def check_environment_variable(config_data: tomlkit.TOMLDocument) -> list[str]:
+
+    def check_use_xxx(device_type: str):
+        variable = os.environ.get(f"USE_{device_type}", "all")
+        try:
+            if variable == "-1":
+                return
+            elif variable == "all":
+                devices = config_data["devices"][device_type.lower()]
+                device_numbers = [
+                    device["device_number"]
+                    for device_key, device in devices.items()
+                    if device_key.startswith(device_type.lower())
+                ]
+            else:
+                device_numbers = [
+                    f"{device_type.lower()}:{id}"
+                    for id in map(int, variable.split(","))
+                ]
+            device_list.extend(device_numbers)
+        except ValueError:
+            exit(
+                f"[KaiTian][Error] The provided USE_{device_type} is invalid: {variable}"
+            )
+
+    device_list = []
+    check_use_xxx("CUDA")
+    check_use_xxx("MLU")
+    return device_list
+
+
+def build_image(device_list: list[str]):
+
+    def build_image_inner(device_type: str):
+        match device_type:
+            case "cuda":
+                base_image = CUDA_BASE_IMAGE
+                image = CUDA_IMAGE
+            case "mlu":
+                base_image = MLU_BASE_IMAGE
+                image = MLU_IMAGE
+            case _:
+                exit(
+                    f"[KaiTian][Error] Internal error: unmatched device_type {device_type}."
+                )
+        client = docker.from_env()
+        try:
+            client.images.get(image)
+        except docker.errors.ImageNotFound:
+            try:
+                client.images.get(base_image)
+            except docker.errors.ImageNotFound:
+                exit(f"[KaiTian][Error] Base Image {base_image} does not exist.")
+            print(f"[KaiTian][Info] Building {image}")
+            build_command = [
+                "docker",
+                "build",
+                "-t",
+                image,
+                "--build-arg",
+                f"IMAGE={base_image}",
+                "--build-arg",
+                f"DEVICE={device_type.upper()}",
+                ".",
+            ]
+            process = subprocess.Popen(
+                build_command,
+                cwd=os.getcwd(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+            while True:
+                output = process.stdout.readline()
+                if output == "" and process.poll() is not None:
+                    exit_code = process.poll()
+                    if exit_code != 0:
+                        exit(f"[KaiTian][Error] Build image error: {exit_code}")
+                    break
+                if output:
+                    print(output.strip(), flush=True)
+
+    device_types = set(device.split(":")[0] for device in device_list)
+    for device_type in device_types:
+        build_image_inner(device_type)
 
 
 def run_kaitian(args, unknown_args):
-    find_devices()
-    use_devices()
-    docker_run(args, unknown_args)
+    # get config data
+    if not os.path.isfile(CONFIG_FILE):
+        exit(
+            f"[KaiTian][Error] Unable to find configuration file. Please run 'kaitian init' first."
+        )
+    with open(CONFIG_FILE, "r") as file:
+        config_data = tomlkit.loads(file.read())
+
+    # get the specified device to use
+    device_list = check_environment_variable(config_data)
+
+    if args.develop:
+        build_image(device_list)
+
+    docker_run(args, unknown_args, device_list)

@@ -10,17 +10,18 @@ from torch.utils.data.distributed import Dataset, Sampler
 
 from .config import MAX_COMPUTE_CAPABILITY
 
-CUDA_COMPUTE_CAPABILTY = float(os.environ.get("CUDA_COMPUTE_CAPABILTY", "10.0"))
+CUDA_COMPUTE_CAPABILTY = float(os.environ.get("CUDA_COMPUTE_CAPABILTY", "6"))
 T_co = TypeVar("T_co", covariant=True)
 
 
 def global_rank() -> int:
-    global_rank_ = os.environ.get("KAITIAN_GLOBAL_RANK_START", None)
-    if global_rank_ is None:
+    local_rank = dist.get_rank()
+    global_rank_start = os.environ.get("KAITIAN_GLOBAL_RANK_START", None)
+    if global_rank_start is None:
         raise EnvironmentError(
             "[KaiTian] [Internal Error] Required environment variable KAITIAN_GLOBAL_RANK_START not set."
         )
-    return int(global_rank_) + dist.get_rank()
+    return int(global_rank_start) + local_rank
 
 
 def global_world_size() -> int:
@@ -44,6 +45,24 @@ def optimize_batch_size(ori_batch_size: int):
 
     batch_size = round(ori_batch_size * compute_capability / MAX_COMPUTE_CAPABILITY)
     return batch_size
+
+
+def compute_capability() -> float:
+    compute_capability_ = os.environ.get("KAITIAN_COMPUTE_CAPABILTY", None)
+    if compute_capability_ is None:
+        raise EnvironmentError(
+            "[KaiTian] [Internal Error] Required environment variable KAITIAN_COMPUTE_CAPABILTY not set."
+        )
+    return float(compute_capability_)
+
+
+def total_compute_capability() -> float:
+    total_compute_capability_ = os.environ.get("KAITIAN_TOTAL_COMPUTE_CAPABILTY", None)
+    if total_compute_capability_ is None:
+        raise EnvironmentError(
+            "[KaiTian] [Internal Error] Required environment variable KAITIAN_TOTAL_COMPUTE_CAPABILTY not set."
+        )
+    return float(total_compute_capability_)
 
 
 def get_compute_capability(global_rank: int) -> float:
@@ -142,9 +161,9 @@ class DistributedSampler(Sampler[T_co]):
         self.batch_size = optimize_batch_size(batch_size)
         self.num_samples = get_num_samples(len(dataset), rank)
 
-        # print(
-        #     f"rank: {rank}, batch_size: {self.batch_size}, num_samples: {self.num_samples}"
-        # )
+        print(
+            f"rank: {rank}, batch_size: {self.batch_size}, num_samples: {self.num_samples}"
+        )
 
         self.total_size = get_sampler_total_size(len(self.dataset))
         self.shuffle = shuffle
@@ -175,9 +194,9 @@ class DistributedSampler(Sampler[T_co]):
 
         end_index = start_index + self.num_samples
         indices = indices[start_index:end_index]
-        # print(
-        #     f"rank: {self.rank}, start_index: {start_index}, end_index:{end_index}, len_indices:{len(indices)}",
-        # )
+        print(
+            f"rank: {self.rank}, start_index: {start_index}, end_index:{end_index}, len_indices:{len(indices)}",
+        )
         assert len(indices) == self.num_samples
 
         return iter(indices)

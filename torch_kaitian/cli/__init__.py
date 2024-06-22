@@ -1,4 +1,5 @@
 import argparse
+import os
 
 from .init import init_kaitian
 from .run import run_kaitian
@@ -52,4 +53,8 @@ def main():
     if known_args.command == "init":
         init_kaitian(known_args, unknown_args)
     elif known_args.command == "run":
+        # argument check
+        file = known_args.FILE
+        if not os.path.exists(file):
+            exit(f"[KaiTian][Error] {file} not found.")
         run_kaitian(known_args, unknown_args)

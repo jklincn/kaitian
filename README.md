@@ -41,89 +41,112 @@ python -m pip install .
 
 Taking NVIDIA CUDA for distributed training as an example.
 
-| Original code                                                | Modified code                                                |
-| ------------------------------------------------------------ | ------------------------------------------------------------ |
-|                                                              | import torch_kaitian                                         |
-| world_size = torch.cuda.device_count()                       | world_size = torch_kaitian.local_device_count()              |
-| dist.init_process_group("nccl", rank=rank, world_size=world_size) | dist.init_process_group("kaitian", rank=rank, world_size=world_size) |
-| torch.cuda.set_device(rank)                                  | torch_kaitian.set_device(rank)                               |
-| device = "cuda"                                              | device = torch_kaitian.device()                              |
-| DistributedSampler(train_set, num_replicas=world_size, rank=rank) | global_world_size = torch_kaitian.global_world_size()<br />global_rank = torch_kaitian.global_rank() <br />DistributedSampler(train_set,num_replicas=global_world_size,rank=global_rank ) |
-| torch.manual_seed(seed)<br />torch.cuda.manual_seed(seed)<br />torch.backends.cudnn.deterministic = True | torch_kaitian.manual_seed(seed)                              |
+1. Import kaitian
 
-Specific adaptation examples can be found in [example/cuda.py](example/cuda.py) (original code) and [example/kaitian.py](example/kaitian.py) (modified code), with the following differences：
+   ```python
+   import torch_kaitian
+   from torch_kaitian.distributed import DistributedSampler, optimize_batch_size
+   ```
+
+2. Modify world_size
+
+   ```python
+   # Before
+   world_size = torch.cuda.device_count()
+   # After
+   world_size = torch_kaitian.local_device_count()
+   ```
+
+3. Modify distributed setup
+
+   ```python
+   # Before
+   dist.init_process_group("nccl", rank=rank, world_size=world_size)
+   torch.cuda.set_device(rank)
+   # After
+   dist.init_process_group("kaitian", rank=rank, world_size=world_size)
+   torch_kaitian.set_device(rank)
+   ```
+
+4. Modify device
+
+   ```python
+   # Before
+   device = "cuda"
+   # After
+   device = torch_kaitian.device()
+   ```
+
+5. Modify DistributedSampler of **train_set** 
+
+   ```python
+   # Before
+   train_sampler = DistributedSampler(train_set)
+   # After
+   train_sampler = DistributedSampler(train_set, batch_size)
+   ```
+
+6. Modify DataLoader of **train_set** 
+
+   ```python
+   # Before
+   train_loader = DataLoader(train_set, batch_size=batch_size, sampler=train_sampler, num_workers=2)
+   # After
+   train_loader = DataLoader(train_set, batch_size=optimize_batch_size(batch_size), sampler=train_sampler, num_workers=2)
+   ```
+
+7. Modify random seed settings
+
+   ```python
+   # Before
+   torch.manual_seed(seed)
+   torch.cuda.manual_seed(seed)
+   torch.backends.cudnn.deterministic = True
+   # After
+   torch_kaitian.manual_seed(seed)
+   ```
+
+Specific adaptation examples can be found in [example/cuda.py](example/cuda.py) (original code) and [example/kaitian.py](example/kaitian.py) (modified code)
+
+### Initialize
+
+Initialize the KaiTian environment, which includes creating a configuration file, registering available devices, and pulling images.
 
 ```
-~/kaitian/example$ diff cuda.py kaitian.py
-14a15,16
-> import torch_kaitian
-> 
-18c20
-< device = "cuda"
----
-> device = torch_kaitian.device()
-24,25c26,27
-<     dist.init_process_group("nccl", rank=rank, world_size=world_size)
-<     torch.cuda.set_device(rank)
----
->     dist.init_process_group("kaitian", rank=rank, world_size=world_size)
->     torch_kaitian.set_device(rank)
-29,31c31
-<     torch.manual_seed(seed)
-<     torch.cuda.manual_seed(seed)
-<     torch.backends.cudnn.deterministic = True
----
->     torch_kaitian.manual_seed(seed)
-45d44
-< 
-47c46,50
-<     train_sampler = DistributedSampler(train_set)
----
->     train_sampler = DistributedSampler(
->         train_set,
->         num_replicas=torch_kaitian.global_world_size(),
->         rank=torch_kaitian.global_rank(),
->     )
-53c56,61
-<     test_sampler = DistributedSampler(test_set, shuffle=False)
----
->     test_sampler = DistributedSampler(
->         test_set,
->         num_replicas=torch_kaitian.global_world_size(),
->         rank=torch_kaitian.global_rank(),
->         shuffle=False,
->     )
-97c105
-<     world_size = torch.cuda.device_count()
----
->     world_size = torch_kaitian.local_device_count()
+kaitian init
 ```
 
-### Pull relevant images
+When there are changes in the machine environment (such as changes in the number of accelerators installed), reinitialization is necessary.
 
 ```
-docker pull jklincn/kaitian:[tag]
+kaitian init -r
 ```
 
-> For example, if you want to train using CUDA and MLU simultaneously, you need to pull the CUDA and MLU images.
+### Run
+
+```
+kaitian run -f your_code.py
+```
+
+By default, all available devices on the host will be used. You can specify which accelerators to use with `USE_XXX`. Currently supported options include `USE_CUDA` and `USE_MLU`.
+
+Usage example:
+
+- `USE_CUDA=0`：Use GPU0 to accelerate
+- `USE_CUDA=0,1`：Use GPU0 and GPU1 to accelerate
+- `USE_CUDA=0 USE_MLU=1`：Use GPU0 and MLU1 to accelerate
+- `USE_CUDA=-1`：Don't use GPU to accelerate
+
+## Image List
 
 #### NVIDIA CUDA
 
 - `0.0.0-cuda`
   - Python 3.10 + PyTorch 1.13.1 + CUDA 11.6 + cuDNN 8
-  - FROM pytorch/pytorch:1.13.1-cuda11.6-cudnn8-devel
+  - FROM `pytorch/pytorch:1.13.1-cuda11.6-cudnn8-devel`
 
 #### Cambricon MLU
 
 - `0.0.0-mlu`
   - Python 3.10 + Pytorch 1.13.1 + Cambricon 1.17.0
-  - FROM yellow.hub.cambricon.com/pytorch/pytorch:v1.17.0-torch1.13.1-ubuntu20.04-py310
-
-### Run code using launcher
-
-```
-kaitian run your_code.py
-```
-
-By default, all available devices on the host will be used. Specific device can be disabled through `USE_XXX=0`. Currently, `USE_CUDA` and `USE_MLU` is supported.
-
+  - FROM `yellow.hub.cambricon.com/pytorch/pytorch:v1.17.0-torch1.13.1-ubuntu20.04-py310`

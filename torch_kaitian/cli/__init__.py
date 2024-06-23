@@ -27,8 +27,8 @@ def main():
 
     parser_init = subparsers.add_parser("init", help="Initialize KaiTian environment")
     parser_init.add_argument(
-        "-f",
-        "--force",
+        "-r",
+        "--refresh",
         action="store_true",
         help="Reinitialization KaiTian environment",
     )
@@ -46,7 +46,7 @@ def main():
         help="Enable quiet mode, less output is printed",
     )
     parser_run.add_argument(
-        "-d", "--develop", action="append", help="Development mode arguments"
+        "-d", "--develop", action="append", help="Set development mode arguments"
     )
     known_args, unknown_args = parser.parse_known_args()
     if known_args.command == "init":

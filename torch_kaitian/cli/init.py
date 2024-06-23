@@ -198,7 +198,7 @@ def init_kaitian(args, unknown_args):
     if not os.path.exists(config.CONFIG_DIR):
         os.makedirs(config.CONFIG_DIR)
 
-    if not os.path.isfile(config.CONFIG_FILE) or args.force:
+    if not os.path.isfile(config.CONFIG_FILE) or args.refresh:
         # configuration file does not exist or is forcibly overwritten
         config_data = create_config()
         with open(config.CONFIG_FILE, "w") as file:

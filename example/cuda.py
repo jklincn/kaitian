@@ -110,7 +110,6 @@ def run(rank, world_size):
             total += labels.size(0)
             correct += (predicted == labels).sum().item()
     if rank == 0:
-        # Accuracy: 75.84%
         print(f"Rank {rank}, Accuracy: {100 * correct / total:.2f}%", flush=True)
     dist.destroy_process_group()
 

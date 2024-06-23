@@ -55,7 +55,6 @@ def set_seed(seed):
 def run(rank, world_size):
     setup(rank, world_size)
     set_seed(world_size)  # using a random number is also acceptable
-
     transform = transforms.Compose(
         [
             transforms.Resize(256),
@@ -64,11 +63,12 @@ def run(rank, world_size):
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]),
         ]
     )
+
     train_set = datasets.CIFAR10(root="./data", train=True, transform=transform)
     train_sampler = DistributedSampler(train_set, batch_size)
     train_loader = DataLoader(
         train_set,
-        batch_size=optimize_batch_size(args.batch_size),
+        batch_size=optimize_batch_size(batch_size),
         sampler=train_sampler,
         num_workers=2,
     )

@@ -1,16 +1,13 @@
 import math
 import os
-from typing import Iterator, Optional, TypeVar
+from typing import Iterator, TypeVar
 
-import numpy as np
 import torch
 import torch.distributed as dist
 from torch.utils.data.distributed import Dataset, Sampler
 
+from . import config, redis
 
-from .config import MAX_COMPUTE_CAPABILITY
-
-CUDA_COMPUTE_CAPABILTY = float(os.environ.get("CUDA_COMPUTE_CAPABILTY", "6"))
 T_co = TypeVar("T_co", covariant=True)
 
 
@@ -33,112 +30,44 @@ def global_world_size() -> int:
     return int(global_world_size_)
 
 
-# We don't choose batch sizes as powers of 2
-# reference:
-# https://sebastianraschka.com/blog/2022/batch-size-2.html
-# https://wandb.ai/datenzauberai/Batch-Size-Testing/reports/Do-Batch-Sizes-Actually-Need-To-Be-Powers-of-2---VmlldzoyMDkwNDQx
-
-
-def optimize_batch_size(ori_batch_size: int):
-    rank = global_rank()
-    compute_capability = get_compute_capability(rank)
-
-    batch_size = round(ori_batch_size * compute_capability / MAX_COMPUTE_CAPABILITY)
+def calc_optimized_batch_size(global_rank: int, ori_batch_size: int) -> int:
+    compute_capability = redis.get_compute_capability(global_rank)
+    # We don't choose batch sizes as powers of 2
+    # reference:
+    # https://sebastianraschka.com/blog/2022/batch-size-2.html
+    # https://wandb.ai/datenzauberai/Batch-Size-Testing/reports/Do-Batch-Sizes-Actually-Need-To-Be-Powers-of-2---VmlldzoyMDkwNDQx
+    batch_size = round(
+        ori_batch_size * compute_capability / config.MAX_COMPUTE_CAPABILITY
+    )
     return batch_size
 
 
-def compute_capability() -> float:
-    compute_capability_ = os.environ.get("KAITIAN_COMPUTE_CAPABILTY", None)
-    if compute_capability_ is None:
-        raise EnvironmentError(
-            "[KaiTian] [Internal Error] Required environment variable KAITIAN_COMPUTE_CAPABILTY not set."
-        )
-    return float(compute_capability_)
+def optimize_batch_size(ori_batch_size: int) -> int:
+    rank = global_rank()
+    return calc_optimized_batch_size(rank, ori_batch_size)
 
 
-def total_compute_capability() -> float:
-    total_compute_capability_ = os.environ.get("KAITIAN_TOTAL_COMPUTE_CAPABILTY", None)
-    if total_compute_capability_ is None:
-        raise EnvironmentError(
-            "[KaiTian] [Internal Error] Required environment variable KAITIAN_TOTAL_COMPUTE_CAPABILTY not set."
-        )
-    return float(total_compute_capability_)
+def get_total_optimized_batch_size(ori_batch_size: int) -> int:
+    total_optimized_batch_size = 0
+    world_size = global_world_size()
+    for rank in range(world_size):
+        total_optimized_batch_size += calc_optimized_batch_size(rank, ori_batch_size)
+    return total_optimized_batch_size
 
 
-def get_compute_capability(global_rank: int) -> float:
-    if global_rank == 0:
-        return CUDA_COMPUTE_CAPABILTY
-    elif global_rank == 1:
-        return 10.0
+def get_num_samples(dataset_len: int, global_rank: int, ori_batch_size: int) -> int:
+    iterations = calc_iteration_times(dataset_len, ori_batch_size)
+    optimized_batch_size = calc_optimized_batch_size(global_rank, ori_batch_size)
+    return iterations * optimized_batch_size
 
 
-def get_sampler_total_size(dataset_len: int) -> int:
-    cuda_batch_size = round(64 * get_compute_capability(0) / MAX_COMPUTE_CAPABILITY)
-    mlu_batch_size = 64
-    iterations = math.ceil(dataset_len / (cuda_batch_size + mlu_batch_size))
-    total_size = iterations * (cuda_batch_size + mlu_batch_size)
-    return total_size
-
-
-def get_num_samples(dataset_len: int, global_rank: int) -> int:
-    cuda_batch_size = round(64 * get_compute_capability(0) / MAX_COMPUTE_CAPABILITY)
-    mlu_batch_size = 64
-    iterations = math.ceil(dataset_len / (cuda_batch_size + mlu_batch_size))
-    if global_rank == 0:
-        return iterations * cuda_batch_size
-    elif global_rank == 1:
-        return iterations * mlu_batch_size
+def calc_iteration_times(dataset_len: int, ori_batch_size: int) -> int:
+    total_batch_size = get_total_optimized_batch_size(ori_batch_size)
+    iterations = math.ceil(dataset_len / total_batch_size)
+    return iterations
 
 
 class DistributedSampler(Sampler[T_co]):
-    r"""Sampler that restricts data loading to a subset of the dataset.
-
-    It is especially useful in conjunction with
-    :class:`torch.nn.parallel.DistributedDataParallel`. In such a case, each
-    process can pass a :class:`~torch.utils.data.DistributedSampler` instance as a
-    :class:`~torch.utils.data.DataLoader` sampler, and load a subset of the
-    original dataset that is exclusive to it.
-
-    .. note::
-        Dataset is assumed to be of constant size and that any instance of it always
-        returns the same elements in the same order.
-
-    Args:
-        dataset: Dataset used for sampling.
-        num_replicas (int, optional): Number of processes participating in
-            distributed training. By default, :attr:`world_size` is retrieved from the
-            current distributed group.
-        rank (int, optional): Rank of the current process within :attr:`num_replicas`.
-            By default, :attr:`rank` is retrieved from the current distributed
-            group.
-        shuffle (bool, optional): If ``True`` (default), sampler will shuffle the
-            indices.
-        seed (int, optional): random seed used to shuffle the sampler if
-            :attr:`shuffle=True`. This number should be identical across all
-            processes in the distributed group. Default: ``0``.
-        drop_last (bool, optional): if ``True``, then the sampler will drop the
-            tail of the data to make it evenly divisible across the number of
-            replicas. If ``False``, the sampler will add extra indices to make
-            the data evenly divisible across the replicas. Default: ``False``.
-
-    .. warning::
-        In distributed mode, calling the :meth:`set_epoch` method at
-        the beginning of each epoch **before** creating the :class:`DataLoader` iterator
-        is necessary to make shuffling work properly across multiple epochs. Otherwise,
-        the same ordering will be always used.
-
-    Example::
-
-        >>> # xdoctest: +SKIP
-        >>> sampler = DistributedSampler(dataset) if is_distributed else None
-        >>> loader = DataLoader(dataset, shuffle=(sampler is None),
-        ...                     sampler=sampler)
-        >>> for epoch in range(start_epoch, n_epochs):
-        ...     if is_distributed:
-        ...         sampler.set_epoch(epoch)
-        ...     train(loader)
-    """
-
     def __init__(
         self,
         dataset: Dataset,
@@ -149,6 +78,7 @@ class DistributedSampler(Sampler[T_co]):
     ) -> None:
         num_replicas = global_world_size()
         rank = global_rank()
+        dataset_len = len(dataset)
         if rank >= num_replicas or rank < 0:
             raise ValueError(
                 "Invalid rank {}, rank should be in the interval"
@@ -156,18 +86,19 @@ class DistributedSampler(Sampler[T_co]):
             )
         self.dataset = dataset
         self.num_replicas = num_replicas
-        self.rank = rank
+        self.global_rank = rank
         self.epoch = 0
-        self.batch_size = optimize_batch_size(batch_size)
-        self.num_samples = get_num_samples(len(dataset), rank)
-
-        print(
-            f"rank: {rank}, batch_size: {self.batch_size}, num_samples: {self.num_samples}"
-        )
-
-        self.total_size = get_sampler_total_size(len(self.dataset))
+        self.batch_size = batch_size
+        self.optimized_batch_size = calc_optimized_batch_size(rank, batch_size)
+        self.iterations = calc_iteration_times(dataset_len, batch_size)
+        self.num_samples = get_num_samples(dataset_len, self.global_rank, batch_size)
+        self.total_size = self.iterations * get_total_optimized_batch_size(batch_size)
         self.shuffle = shuffle
         self.seed = seed
+
+        # print(
+        #     f"global_rank: {self.global_rank}, optimized_batch_size: {self.optimized_batch_size}, num_samples: {self.num_samples}, iterations:{self.iterations}, total_size: {self.total_size}"
+        # )
 
     def __iter__(self) -> Iterator[T_co]:
         if self.shuffle:
@@ -188,15 +119,12 @@ class DistributedSampler(Sampler[T_co]):
         # subsample
         start_index = 0
         for i in range(global_world_size()):
-            if i == self.rank:
+            if i == self.global_rank:
                 break
-            start_index += get_num_samples(len(self.dataset), i)
-
+            start_index += get_num_samples(len(self.dataset), i, self.batch_size)
         end_index = start_index + self.num_samples
         indices = indices[start_index:end_index]
-        print(
-            f"rank: {self.rank}, start_index: {start_index}, end_index:{end_index}, len_indices:{len(indices)}",
-        )
+
         assert len(indices) == self.num_samples
 
         return iter(indices)
@@ -205,12 +133,4 @@ class DistributedSampler(Sampler[T_co]):
         return self.num_samples
 
     def set_epoch(self, epoch: int) -> None:
-        r"""
-        Sets the epoch for this sampler. When :attr:`shuffle=True`, this ensures all replicas
-        use a different random ordering for each epoch. Otherwise, the next iteration of this
-        sampler will yield the same ordering.
-
-        Args:
-            epoch (int): Epoch number.
-        """
         self.epoch = epoch

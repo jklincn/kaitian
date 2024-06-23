@@ -34,7 +34,10 @@ def main():
     )
     parser_run = subparsers.add_parser("run", help="Run the training code")
     parser_run.add_argument(
-        "FILE", help="Your training code, for example: python run.py train.py"
+        "-f",
+        "--file",
+        default=None,
+        help="Your training code",
     )
     parser_run.add_argument(
         "-q",
@@ -43,18 +46,18 @@ def main():
         help="Enable quiet mode, less output is printed",
     )
     parser_run.add_argument(
-        "-d",
-        "--develop",
-        action="store_true",
-        help="Enable development mode",
+        "-d", "--develop", action="append", help="Development mode arguments"
     )
-
     known_args, unknown_args = parser.parse_known_args()
     if known_args.command == "init":
         init_kaitian(known_args, unknown_args)
     elif known_args.command == "run":
         # argument check
-        file = known_args.FILE
-        if not os.path.exists(file):
-            exit(f"[KaiTian][Error] {file} not found.")
+        if known_args.develop is None:
+            if known_args.file is None:
+                exit(f"[KaiTian][Error] '-f FILE' argument is required.")
+            else:
+                file = known_args.file
+                if not os.path.exists(file):
+                    exit(f"[KaiTian][Error] {file} not found.")
         run_kaitian(known_args, unknown_args)

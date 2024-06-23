@@ -1,49 +1,46 @@
 import multiprocessing
 import os
 import subprocess
+import traceback
 from pathlib import Path
 
 import docker
 import tomlkit
 
-from ..config import (
-    CONFIG_FILE,
-    CUDA_BASE_IMAGE,
-    CUDA_IMAGE,
-    MLU_BASE_IMAGE,
-    MLU_IMAGE,
-    REDIS_IMAGE,
-)
-from .monitor import run_monitor
+from .. import config
+from . import monitor, redis
 
 
 def run_container(
     device_type: str,
     device_ids: list[str],
-    file: str,
+    args,
     gloo_rank: int,
     gloo_world_size: int,
     global_world_size: int,
     global_rank_start: int,
     unknown_args,
 ):
-    print(f"Running {device_type} container...")
+    print(f"[KaiTian][Info] Running {device_type} container...")
     client = docker.from_env()
-    command = ["python", f"/{os.path.basename(file)}"] + unknown_args
     environment = {
         "KAITIAN_GLOO_RANK": gloo_rank,
         "KAITIAN_GLOO_WORLD_SIZE": gloo_world_size,
         "KAITIAN_GLOBAL_WORLD_SIZE": global_world_size,
         "KAITIAN_GLOBAL_RANK_START": global_rank_start,
-        "KAITIAN_COMPUTE_CAPABILTY": "6",
-        "KAITIAN_TOTAL_COMPUTE_CAPABILTY": "",
     }
-    file_path = Path(file).resolve()
-    volumes = [
-        f"{file_path}:/{file_path.name}",
-        f"{file_path.parent}/data:/data",
-        f"/home/lin/.cache/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints",
-    ]
+    if "wait" in args.develop:
+        kaitian_path = Path(__file__).resolve().parent.parent.parent
+        volumes = [f"{kaitian_path}:/kaitian"]
+        command = None
+    else:
+        file_path = Path(args.file).resolve()
+        volumes = [
+            f"{file_path}:/{file_path.name}",
+            f"{file_path.parent}/data:/data",
+            f"/home/lin/.cache/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints",
+        ]
+        command = ["python", f"/{file_path.name}"] + unknown_args
     device_requests = None
     devices = None
     match device_type:
@@ -53,13 +50,13 @@ def run_container(
                     device_ids=device_ids, capabilities=[["gpu"]]
                 )
             ]
-            image = CUDA_IMAGE
+            image = config.CUDA_IMAGE
         case "mlu":
             # Compatible with MLU370
             devices = ["/dev/cambricon_ctl"]
             for i in device_ids:
                 devices.extend([f"/dev/cambricon_dev{i}", f"/dev/cambricon_ipcm{i}"])
-            image = MLU_IMAGE
+            image = config.MLU_IMAGE
     return client.containers.run(
         detach=True,
         network="kaitian",
@@ -102,10 +99,10 @@ def docker_run(args, unknown_args, device_list: list[str]):
         network = client.networks.create("kaitian", driver="bridge")
 
     # create monitor
-    if args.develop:
+    if "wait" not in args.develop:
         monitor_stop_flag = multiprocessing.Value("b", False)
         monitor_process = multiprocessing.Process(
-            target=run_monitor, args=(monitor_stop_flag,)
+            target=monitor.run_monitor, args=(monitor_stop_flag,)
         )
         monitor_process.start()
 
@@ -114,7 +111,7 @@ def docker_run(args, unknown_args, device_list: list[str]):
         detach=True,
         network="kaitian",
         name=f"kaitian_redis",
-        image=REDIS_IMAGE,
+        image=config.REDIS_IMAGE,
         command="redis-server",
     )
 
@@ -125,13 +122,13 @@ def docker_run(args, unknown_args, device_list: list[str]):
     global_rank_start = 0
     try:
         for gloo_rank, device_type in enumerate(device_types):
-            device_ids = [
-                device.split(":")[1] for device in device_list if device_type in device
-            ]
+            devices = [device for device in device_list if device_type in device]
+            redis.set_capability(global_rank_start, devices, device_type)
+            device_ids = [device.split(":")[1] for device in devices]
             containers[device_type] = run_container(
                 device_type,
                 device_ids,
-                args.FILE,
+                args,
                 gloo_rank,
                 gloo_world_size,
                 global_world_size,
@@ -142,6 +139,17 @@ def docker_run(args, unknown_args, device_list: list[str]):
                 1 for device in device_list if device.startswith(device_type)
             )
             global_rank_start += device_count
+        if "wait" in args.develop:
+            print("[KaiTian][Info] Detected 'wait' development argument.", flush=True)
+            print(
+                "[KaiTian][Info] You can use 'docker exec' to enter the container.",
+                flush=True,
+            )
+            print(
+                "[KaiTian][Info] And You should manually remove the containers and network.",
+                flush=True,
+            )
+            return
         # get output
         print("--------- Output -----------")
         log_processes = []
@@ -164,7 +172,13 @@ def docker_run(args, unknown_args, device_list: list[str]):
             "\n[KaiTian][Info] Received KeyboardInterrupt. Stop and clean up.",
             flush=True,
         )
+    except Exception as e:
+        print(f"[KaiTian][Error] Unknown error: {e}", flush=True)
+        tb = traceback.format_exc()
+        print(tb)
     finally:
+        if "wait" in args.develop:
+            return
         # clean up
         all_containers = client.containers.list(all=True)
         container_names = [f"kaitian_{device_type}" for device_type in device_types]
@@ -174,7 +188,7 @@ def docker_run(args, unknown_args, device_list: list[str]):
                 container.remove(force=True)
         network.remove()
 
-    if args.develop:
+    if "wait" not in args.develop:
         monitor_stop_flag.value = True
         monitor_process.join()
 
@@ -215,11 +229,11 @@ def build_image(device_list: list[str]):
     def build_image_inner(device_type: str):
         match device_type:
             case "cuda":
-                base_image = CUDA_BASE_IMAGE
-                image = CUDA_IMAGE
+                base_image = config.CUDA_BASE_IMAGE
+                image = config.CUDA_IMAGE
             case "mlu":
-                base_image = MLU_BASE_IMAGE
-                image = MLU_IMAGE
+                base_image = config.MLU_BASE_IMAGE
+                image = config.MLU_IMAGE
             case _:
                 exit(
                     f"[KaiTian][Error] Internal error: unmatched device_type {device_type}."
@@ -268,17 +282,17 @@ def build_image(device_list: list[str]):
 
 def run_kaitian(args, unknown_args):
     # get config data
-    if not os.path.isfile(CONFIG_FILE):
+    if not os.path.isfile(config.CONFIG_FILE):
         exit(
             f"[KaiTian][Error] Unable to find configuration file. Please run 'kaitian init' first."
         )
-    with open(CONFIG_FILE, "r") as file:
+    with open(config.CONFIG_FILE, "r") as file:
         config_data = tomlkit.loads(file.read())
 
     # get the specified device to use
     device_list = check_environment_variable(config_data)
 
-    if args.develop:
+    if "build" in args.develop:
         build_image(device_list)
 
     docker_run(args, unknown_args, device_list)

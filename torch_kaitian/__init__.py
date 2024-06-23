@@ -2,8 +2,6 @@ import os
 
 import torch
 
-from . import distributed
-
 device_type = os.environ.get("DEVICE", None)
 if device_type:
     from . import _C

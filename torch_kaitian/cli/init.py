@@ -7,15 +7,7 @@ from datetime import datetime
 import docker
 import tomlkit
 
-from ..benchmark import run_benchmark_inner
-from ..config import (
-    CONFIG_DIR,
-    CONFIG_FILE,
-    CUDA_IMAGE,
-    MAX_COMPUTE_CAPABILITY,
-    MLU_IMAGE,
-    REDIS_IMAGE,
-)
+from .. import benchmark, config
 
 
 def find_cuda(config_data: tomlkit.TOMLDocument):
@@ -50,7 +42,7 @@ def find_cuda(config_data: tomlkit.TOMLDocument):
 
     gpu_info_list = [parse_gpu_info(line) for line in lines if line.strip()]
     cuda = tomlkit.table()
-    cuda.add("image", CUDA_IMAGE)
+    cuda.add("image", config.CUDA_IMAGE)
     for i, gpu_info in enumerate(gpu_info_list):
         cuda_device = tomlkit.table()
         cuda_device["device_number"] = f"cuda:{i}"
@@ -88,7 +80,7 @@ def find_mlu(config_data: tomlkit.TOMLDocument):
         "32 GT/s": "5",
     }
     mlu = tomlkit.table()
-    mlu.add("image", MLU_IMAGE)
+    mlu.add("image", config.MLU_IMAGE)
     for i in range(count):
         pci = info["CnmonInfo"][i]["PCI"]
         link_ok = (
@@ -153,7 +145,7 @@ def pull_images(config_data: tomlkit.TOMLDocument):
             print(f"[KaiTian][Info] Successfully pulled {image}.")
 
     # pull redis
-    pull_image_inner(REDIS_IMAGE)
+    pull_image_inner(config.REDIS_IMAGE)
 
     # pull kaitian image
     for device_type in config_data["devices"]:
@@ -167,18 +159,21 @@ def run_benchmark(config_data: tomlkit.TOMLDocument):
     for device_type in config_data["devices"]:
         for device, detail in config_data["devices"][device_type].items():
             if isinstance(detail, dict):
-                benchmark_result[device] = run_benchmark_inner(detail["device_number"])
+                benchmark_result[device] = benchmark.run_benchmark_inner(
+                    detail["device_number"]
+                )
     min_time = min(benchmark_result.values())
     for device_type in config_data["devices"]:
         for device, detail in config_data["devices"][device_type].items():
             if isinstance(detail, dict):
                 detail["compute_capability"] = round(
-                    min_time / benchmark_result[device] * MAX_COMPUTE_CAPABILITY, 1
+                    min_time / benchmark_result[device] * config.MAX_COMPUTE_CAPABILITY,
+                    1,
                 )
 
 
 def create_config() -> tomlkit.TOMLDocument:
-    print(f"[KaiTian][Info] Creating configuration file ({CONFIG_FILE})")
+    print(f"[KaiTian][Info] Creating configuration file ({config.CONFIG_FILE})")
 
     # 1. create empty config and write creation time
     config_data = tomlkit.document()
@@ -200,17 +195,17 @@ def create_config() -> tomlkit.TOMLDocument:
 
 
 def init_kaitian(args, unknown_args):
-    if not os.path.exists(CONFIG_DIR):
-        os.makedirs(CONFIG_DIR)
+    if not os.path.exists(config.CONFIG_DIR):
+        os.makedirs(config.CONFIG_DIR)
 
-    if not os.path.isfile(CONFIG_FILE) or args.force:
+    if not os.path.isfile(config.CONFIG_FILE) or args.force:
         # configuration file does not exist or is forcibly overwritten
         config_data = create_config()
-        with open(CONFIG_FILE, "w") as file:
+        with open(config.CONFIG_FILE, "w") as file:
             file.write(tomlkit.dumps(config_data))
     else:
         # configuration file already exists
-        with open(CONFIG_FILE, "r") as file:
+        with open(config.CONFIG_FILE, "r") as file:
             data = tomlkit.loads(file.read())
             created_time = data.get("create_time")
             created_datetime = datetime.strptime(created_time, "%Y-%m-%d %H:%M:%S")

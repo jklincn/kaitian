@@ -15,7 +15,8 @@ RUN sed -i 's/archive.ubuntu.com/mirrors.ustc.edu.cn/g' /etc/apt/sources.list &&
 COPY ./hiredis /opt/hiredis
 RUN cd /opt/hiredis && \
     make -j$(nproc) && \
-    make install INSTALL_LIBRARY_PATH=/usr/local/lib
+    make install INSTALL_LIBRARY_PATH=/usr/local/lib && \
+    pip install "redis[hiredis]"
 
 # Install gloo
 COPY ./gloo /opt/gloo

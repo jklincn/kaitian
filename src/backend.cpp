@@ -43,12 +43,12 @@ ProcessGroupKaiTian::ProcessGroupKaiTian(
         c10::make_intrusive<ProcessGroupNCCL>(store, rank, size);
 #endif
     if (rank == 0) {
-        auto fileStore = gloo::rendezvous::FileStore("/tmp/kaitian");
+        gloo::rendezvous::RedisStore redis("kaitian_redis");
         auto dev = gloo::transport::tcp::CreateDevice(getenv("DEVICE"));
         kaitian_gloo_world_size = atoi(getenv("KAITIAN_GLOO_WORLD_SIZE"));
         context = std::make_shared<gloo::rendezvous::Context>(
             atoi(getenv("KAITIAN_GLOO_RANK")), kaitian_gloo_world_size);
-        context->connectFullMesh(fileStore, dev);
+        context->connectFullMesh(redis, dev);
         std::cout
             << "\033[1;92mKaitian connection established successfully.\033[0m"
             << std::endl;

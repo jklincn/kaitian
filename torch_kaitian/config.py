@@ -7,6 +7,8 @@ MLU_BASE_IMAGE = (
     "yellow.hub.cambricon.com/pytorch/pytorch:v1.17.0-torch1.13.1-ubuntu20.04-py310"
 )
 
+REDIS_IMAGE = "redis:6.2-alpine"
+
 MAX_COMPUTE_CAPABILITY = 10.0
 
 CONFIG_DIR = Path.home() / ".config" / "kaitian"

@@ -14,6 +14,7 @@ from ..config import (
     CUDA_IMAGE,
     MAX_COMPUTE_CAPABILITY,
     MLU_IMAGE,
+    REDIS_IMAGE,
 )
 
 
@@ -133,16 +134,31 @@ def find_devices(config_data):
 def pull_images(config_data: tomlkit.TOMLDocument):
     print("[KaiTian][Info] Pulling relevant images")
     client = docker.from_env()
-    for device_type in config_data["devices"]:
-        image = config_data["devices"][device_type]["image"]
+
+    def pull_image_inner(image: str):
         try:
             client.images.get(image)
-            print(f"[KaiTian][Info] {image} already exists.")
+            print(f"[KaiTian][Info] Image {image} already exists.")
         except docker.errors.ImageNotFound:
             print(f"[KaiTian][Info] Pulling {image}")
             resp = client.api.pull(image, stream=True, decode=True)
+            completed_layers = set()
             for line in resp:
-                print(json.dumps(line, indent=4))
+                layer_id = line.get("id", "")
+                status = line.get("status", "")
+                if status == "Pull complete":
+                    if layer_id not in completed_layers:
+                        print(f"{layer_id}: {status}")
+                        completed_layers.add(layer_id)
+            print(f"[KaiTian][Info] Successfully pulled {image}.")
+
+    # pull redis
+    pull_image_inner(REDIS_IMAGE)
+
+    # pull kaitian image
+    for device_type in config_data["devices"]:
+        image = config_data["devices"][device_type]["image"]
+        pull_image_inner(image)
 
 
 def run_benchmark(config_data: tomlkit.TOMLDocument):
@@ -162,7 +178,7 @@ def run_benchmark(config_data: tomlkit.TOMLDocument):
 
 
 def create_config() -> tomlkit.TOMLDocument:
-    print(f"[KaiTian][Info] Creating configuration file ({config_file})")
+    print(f"[KaiTian][Info] Creating configuration file ({CONFIG_FILE})")
 
     # 1. create empty config and write creation time
     config_data = tomlkit.document()

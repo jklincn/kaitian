@@ -18,6 +18,7 @@
 #include <gloo/rendezvous/context.h>
 #include <gloo/rendezvous/file_store.h>
 #include <gloo/rendezvous/prefix_store.h>
+#include <gloo/rendezvous/redis_store.h>
 #include <gloo/rendezvous/store.h>
 #include <gloo/scatter.h>
 #include <gloo/transport/tcp/device.h>

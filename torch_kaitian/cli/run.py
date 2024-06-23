@@ -6,7 +6,14 @@ from pathlib import Path
 import docker
 import tomlkit
 
-from ..config import CONFIG_FILE, CUDA_BASE_IMAGE, CUDA_IMAGE, MLU_BASE_IMAGE, MLU_IMAGE
+from ..config import (
+    CONFIG_FILE,
+    CUDA_BASE_IMAGE,
+    CUDA_IMAGE,
+    MLU_BASE_IMAGE,
+    MLU_IMAGE,
+    REDIS_IMAGE,
+)
 from .monitor import run_monitor
 
 
@@ -33,7 +40,6 @@ def run_container(
     }
     file_path = Path(file).resolve()
     volumes = [
-        "kaitian:/tmp/kaitian",
         f"{file_path}:/{file_path.name}",
         f"{file_path.parent}/data:/data",
         f"/home/lin/.cache/torch/hub/checkpoints:/root/.cache/torch/hub/checkpoints",
@@ -95,19 +101,6 @@ def docker_run(args, unknown_args, device_list: list[str]):
     except docker.errors.NotFound:
         network = client.networks.create("kaitian", driver="bridge")
 
-    # create volume
-    try:
-        volume = client.volumes.get("kaitian")
-        volume.remove(force=True)
-    except docker.errors.NotFound:
-        pass
-    finally:
-        volume = client.volumes.create(
-            name="kaitian",
-            driver="local",
-            driver_opts={"type": "tmpfs", "device": "tmpfs", "o": "size=100m"},
-        )
-
     # create monitor
     if args.develop:
         monitor_stop_flag = multiprocessing.Value("b", False)
@@ -116,7 +109,16 @@ def docker_run(args, unknown_args, device_list: list[str]):
         )
         monitor_process.start()
 
-    # create container
+    # create redis server
+    client.containers.run(
+        detach=True,
+        network="kaitian",
+        name=f"kaitian_redis",
+        image=REDIS_IMAGE,
+        command="redis-server",
+    )
+
+    # create accelerator container
     device_types = set(device.split(":")[0] for device in device_list)
     gloo_world_size = len(device_types)
     global_world_size = len(device_list)
@@ -163,15 +165,14 @@ def docker_run(args, unknown_args, device_list: list[str]):
             flush=True,
         )
     finally:
-        # return
+        # clean up
         all_containers = client.containers.list(all=True)
         container_names = [f"kaitian_{device_type}" for device_type in device_types]
         for container in all_containers:
             container_name = container.attrs["Name"].strip("/")
-            if container_name in container_names:
+            if container_name in container_names or container_name == "kaitian_redis":
                 container.remove(force=True)
         network.remove()
-        volume.remove()
 
     if args.develop:
         monitor_stop_flag.value = True

@@ -9,12 +9,12 @@ from torch.utils import cpp_extension
 kaitian_path = Path(__file__).resolve().parent
 sources = glob.glob(f"{kaitian_path}/src/*.cpp")
 include_dirs = [f"{kaitian_path}/include"]
-library_dirs = []
-libraries = []
+library_dirs = ["/usr/local/lib"]
+libraries = ["hiredis", "gloo"]
 define_macros = []
 runtime_library_dirs = []
 extra_compile_args = []
-extra_link_args = ["/usr/local/lib/libgloo.a"]
+extra_link_args = []
 
 
 def mlu_support():

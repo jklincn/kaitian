@@ -53,5 +53,5 @@ def run_benchmark_inner(device: str) -> float:
         command=command,
     )
     output_lines = container_output.decode("utf-8").splitlines()
-    print(f"output_lines[-1] seconds", flush=True)
+    print(f"{output_lines[-1]} seconds", flush=True)
     return float(output_lines[-1])

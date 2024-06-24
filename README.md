@@ -12,19 +12,19 @@ The name comes from the theme song of the 2018 LPL Spring Finals, which also con
 
 ### Prerequisites
 
-#### Basic Environment
-
 - Python >= 3.8
+
 - [Docker Engine](https://docs.docker.com/engine/install/)（Recommended >= 26.0.2）
 
-#### NVIDIA CUDA Support
+- [NVIDIA CUDA](https://developer.nvidia.com/cuda-toolkit) (optional)
 
-- [NVIDIA Driver](https://www.nvidia.com/Download/Find.aspx)（Recommended >= 520.61.05）
-- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)（Recommended >= 1.15.0）
+  - [NVIDIA Driver](https://www.nvidia.com/Download/Find.aspx)（Recommended >= 520.61.05）
 
-#### Cambricon MLU Support
+  - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)（Recommended >= 1.15.0）
 
-- [Cambricon MLU Driver](https://sdk.cambricon.com/download?component_name=Driver)（Recommended >= 5.10.22）
+- [Cambricon MLU](https://www.cambricon.com/) (optional)
+
+  - [Cambricon MLU Driver](https://sdk.cambricon.com/download?component_name=Driver)（Recommended >= 5.10.22）
 
 ### Install KaiTian
 

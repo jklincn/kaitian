@@ -210,5 +210,5 @@ def init_kaitian(args, unknown_args):
             created_time = data.get("create_time")
             created_datetime = datetime.strptime(created_time, "%Y-%m-%d %H:%M:%S")
             print(
-                f"[KaiTian][Warning] KaiTian has already been initialized as of {created_datetime}. Use the '-f' or '--force' option to reinitialize if necessary."
+                f"[KaiTian][Warning] KaiTian has already been initialized as of {created_datetime}. Use the '-r' or '--refresh' option to reinitialize if necessary."
             )

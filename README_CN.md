@@ -12,19 +12,19 @@ KaiTian（开天）是 PyTorch 的通信后端扩展，实现了异构加速卡�
 
 ### 前提
 
-#### 基础环境
-
 - Python >= 3.8
+
 - [Docker Engine](https://docs.docker.com/engine/install/)（推荐 >= 26.0.2）
 
-#### NVIDIA CUDA 支持
+- NVIDIA CUDA（可选）
 
-- [NVIDIA Driver](https://www.nvidia.com/Download/Find.aspx)（推荐 >= 520.61.05）
-- [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)（推荐 >= 1.15.0）
+  - [NVIDIA Driver](https://www.nvidia.com/Download/Find.aspx)（推荐 >= 520.61.05）
 
-#### Cambricon MLU 支持
+  - [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)（推荐 >= 1.15.0）
 
-- [Cambricon MLU Driver](https://sdk.cambricon.com/download?component_name=Driver)（推荐 >= 5.10.22）
+- Cambricon MLU（可选）
+
+  - [Cambricon MLU Driver](https://sdk.cambricon.com/download?component_name=Driver)（推荐 >= 5.10.22）
 
 ### 安装 KaiTian
 

@@ -1,0 +1,6 @@
+[submodule "gloo"]
+	path = gloo
+	url = https://github.com/facebookincubator/gloo.git
+[submodule "hiredis"]
+	path = hiredis
+	url = https://github.com/redis/hiredis.git

@@ -4,3 +4,5 @@ data
 *.egg-info
 compile_commands.json
 .cache
+log*
+__pycache__
